@@ -1,0 +1,78 @@
+appId: com.sentinel.nodemanager.solana
+productName: Sentinel Node Manager Solana
+
+# No publish channel: auto-update is disabled (see src/main/services/updater.ts).
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  # Licence notices for the npm packages the app ships (tools/gen-notices.mjs).
+  - from: .
+    to: .
+    filter:
+      - 'THIRD-PARTY-NOTICES.md'
+  # Tray + window icons are resolved from <resources>/build at runtime (tray.ts, index.ts).
+  - from: build
+    to: build
+    filter:
+      - 'tray-icon*.png'
+      - 'icon.png'
+
+# No signing for now (user decision). macOS hardenedRuntime is off so that
+# unsigned builds launch from Gatekeeper without a manual entitlement flow.
+mac:
+  icon: build/icon.icns
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  identity: null
+
+dmg:
+  writeUpdateInfo: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  verifyUpdateCodeSignature: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: Sentinel Node Manager
+
+linux:
+  icon: build/icon.png
+  category: Network
+  maintainer: Sentinel Node Manager Solana <noreply@users.noreply.github.com>
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+
+asar: true
+asarUnpack:
+  # Native bindings must sit on disk to be loadable.
+  - '**/*.node'
+  - node_modules/better-sqlite3/**/*
+  - node_modules/cpu-features/**/*
+  - node_modules/ssh2/**/*

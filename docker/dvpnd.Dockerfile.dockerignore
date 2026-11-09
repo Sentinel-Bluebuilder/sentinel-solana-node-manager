@@ -1,0 +1,9 @@
+*
+!sentinel-go-sdk
+!sentinel-programs/clients/go
+!sentinel-dvpnd
+!sentinel-dvpnctl
+**/bin
+**/.git
+**/node_modules
+**/*_test.go

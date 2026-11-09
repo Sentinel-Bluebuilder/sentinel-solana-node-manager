@@ -1,0 +1,81 @@
+name: Release
+
+# Push a semver tag (e.g. `v0.1.0`) to build all three OS bundles and
+# attach them to a GitHub Release. electron-updater reads the same
+# release, so tagged builds are what end-users get as in-app updates.
+#
+# workflow_dispatch is a dry-run: it builds everything but does not
+# publish, so you can sanity-check the pipeline without cutting a release.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+            artifact: macos
+          - os: windows-latest
+            target: --win
+            artifact: windows
+          - os: ubuntu-latest
+            target: --linux
+            artifact: linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # GitHub's default Python on runners is 3.12+, which removed
+      # `distutils` — node-gyp's bundled gyp still imports it, so pin to
+      # 3.11 to keep better-sqlite3's configure step working.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build renderer + main bundles
+        run: npm run build
+
+      - name: Package + publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Skip the auto-discovery that would otherwise try to sign with
+          # a random keychain cert on the macOS runner. electron-builder.yml
+          # already sets identity: null but this belt-and-braces it.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: >
+          npx --no-install electron-builder ${{ matrix.target }}
+          --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: ignore
+          retention-days: 14

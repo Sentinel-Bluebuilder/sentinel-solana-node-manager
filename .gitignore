@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+release/
+.DS_Store
+.env
+.env.local
+*.log
+*.tsbuildinfo
+build-ctx/
+
+# E2E run artifacts
+tests/e2e/last-run.log
+tests/e2e/last-report.json

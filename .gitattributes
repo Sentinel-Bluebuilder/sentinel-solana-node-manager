@@ -1,0 +1,7 @@
+# Every text file is LF in the repo and in every checkout (.editorconfig: end_of_line = lf).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+*.ttf binary
+*.woff2 binary

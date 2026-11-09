@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Tray icon = same shield glyph used in build/icon.svg, but on a
+    white rounded-square background so the blue reads cleanly on both
+    light and dark tray bars. The glyph is centered via a translate
+    that matches the canvas midpoint (512,512).
+  -->
+  <rect x="0" y="0" width="1024" height="1024" rx="220" ry="220" fill="#FFFFFF"/>
+  <g transform="translate(512, 512)">
+    <path d="M0 -260 L240 -150 L240 40 C240 200 140 320 0 380 C-140 320 -240 200 -240 40 L-240 -150 Z"
+          fill="#1756FF" stroke="#1756FF" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M-90 20 L-20 90 L110 -60" stroke="#FFFFFF" stroke-width="44" fill="none"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
