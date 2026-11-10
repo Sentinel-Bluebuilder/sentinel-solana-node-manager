@@ -120,13 +120,31 @@ export function Settings() {
                 <input className="field-input mono-inline" value="Solana devnet · program J52dyXW3…TBXs" readOnly />
               </div>
               <div>
-                <div className="field-label">Node image source (patched sentinel-solana upstream/)</div>
-                <input
-                  className="field-input mono-inline"
-                  value={draft.upstreamDir}
-                  onChange={(e) => update({ upstreamDir: e.target.value })}
-                />
+                <div className="field-label">Node image</div>
+                <select
+                  className="field-input"
+                  value={draft.nodeImageSource}
+                  onChange={(e) => update({ nodeImageSource: e.target.value as AppSettings['nodeImageSource'] })}
+                >
+                  <option value="prebuilt">Download the prebuilt image (recommended)</option>
+                  <option value="source">Build from source (developers)</option>
+                </select>
+                <div className="text-[10px] mt-1" style={{ color: 'var(--text-dim)' }}>
+                  {draft.nodeImageSource === 'source'
+                    ? 'Each host builds the image from the folder below (10–20 min, needs Docker buildx).'
+                    : 'Each host downloads the published image once and checks its checksum. No source needed.'}
+                </div>
               </div>
+              {draft.nodeImageSource === 'source' && (
+                <div>
+                  <div className="field-label">Source folder (sentinel-solana tree)</div>
+                  <input
+                    className="field-input mono-inline"
+                    value={draft.upstreamDir}
+                    onChange={(e) => update({ upstreamDir: e.target.value })}
+                  />
+                </div>
+              )}
               <div>
                 <div className="field-label">Priority fee (micro-lamports per compute unit)</div>
                 <input

@@ -904,7 +904,7 @@ async function main() {
     phase(`P${proto === 'wireguard' ? 6 : 7} session · ${proto}`);
     if (proto !== 'wireguard') {
       const switched = await check(`nodes.setProtocol ${proto} → chain bit ${BITS[proto]}`, async () => {
-        const r = await call(`nodes.setProtocol ${nodeId} --service ${proto}`, 300_000);
+        const r = await call(`nodes.setProtocol ${nodeId} --service ${proto}`, 420_000);
         assert(r.ok, r.error);
         const c = await chain(nodeId);
         assert(c.protocols === BITS[proto], `chain protocols ${c.protocols}`);
@@ -963,7 +963,7 @@ async function main() {
   }
   if (MATRIX.includes('wireguard') === false || MATRIX[MATRIX.length - 1] !== 'wireguard') {
     await check('nodes.setProtocol back to wireguard', async () => {
-      const r = await call(`nodes.setProtocol ${nodeId} --service wireguard`, 300_000);
+      const r = await call(`nodes.setProtocol ${nodeId} --service wireguard`, 420_000);
       assert(r.ok, r.error);
       return 'ok';
     });
@@ -981,7 +981,7 @@ async function main() {
   // ── P8 ──
   phase('P8 pricing');
   await check('nodes.updatePricing → three prices on chain', async () => {
-    const r = await call(`nodes.updatePricing --nodeId ${nodeId} --gb 0.003 --hr 0.002 --lease 0.0015`, 300_000);
+    const r = await call(`nodes.updatePricing --nodeId ${nodeId} --gb 0.003 --hr 0.002 --lease 0.0015`, 420_000);
     assert(r.ok, r.error);
     const c = await chain(nodeId);
     assert(c.prices.perGb === 3000 && c.prices.perHour === 2000 && c.prices.leasePerHour === 1500, JSON.stringify(c.prices));

@@ -60,7 +60,8 @@ export function DeploySsh() {
     password: authMode === 'password' ? password : undefined,
   });
 
-  const runTest = async () => {
+  /** Probe the server; resolves true when SSH works. */
+  const runTest = async (): Promise<boolean> => {
     setResult(null);
     setTesting(true);
     try {
@@ -73,14 +74,19 @@ export function DeploySsh() {
           tone: 'success',
         });
       else pushToast({ title: 'SSH failed', body: r.message, tone: 'error' });
+      return r.ok;
     } catch (e) {
       setResult({ ok: false, message: (e as Error).message });
+      return false;
     } finally {
       setTesting(false);
     }
   };
 
   const startDeploy = async () => {
+    // Deploy tests the connection itself when it has not been tested yet, so the user needs
+    // no separate Test click; a failed probe stops here and shows why.
+    if (!result?.ok && !(await runTest())) return;
     setDeploying(true);
     try {
       const { jobId } = await window.api.deploy.start({
@@ -337,7 +343,7 @@ export function DeploySsh() {
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 className="btn btn-secondary"
-                onClick={runTest}
+                onClick={() => void runTest()}
                 disabled={!ready || testing}
               >
                 {testing ? 'Testing…' : 'Test connection'}
@@ -345,10 +351,10 @@ export function DeploySsh() {
               <button
                 className="btn btn-primary"
                 onClick={startDeploy}
-                disabled={!ready || deploying || !result?.ok}
-                title={!result?.ok ? 'Test the SSH connection first' : undefined}
+                disabled={!ready || deploying || testing}
+                title={!result?.ok ? 'Tests the SSH connection, then deploys' : undefined}
               >
-                {deploying ? 'Starting…' : 'Deploy'}
+                {deploying ? 'Starting…' : testing ? 'Testing…' : 'Deploy'}
                 <MIcon name="arrow_forward" size={14} />
               </button>
             </div>
@@ -362,7 +368,7 @@ export function DeploySsh() {
             </div>
             <div className="card-body flex flex-col gap-1.5">
               <Step index={1} label="SSH probe; install Docker if missing" />
-              <Step index={2} label="Build the dvpnd node image on the host (first time ≈ 5 min)" />
+              <Step index={2} label="Node image on the server: downloaded once (about 90 MB, SHA-256 checked), or built from source if chosen in Settings" />
               <Step index={3} label="Fund the node key: 0.05 SOL + 1 tDVPN bond" />
               <Step index={4} label="dvpnd init; node key + configs written over SFTP (0600)" />
               <Step index={5} label="open_node on Solana devnet, signed by the node key" />

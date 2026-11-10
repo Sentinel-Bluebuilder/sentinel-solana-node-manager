@@ -72,9 +72,9 @@ describe('dvpnctl output', () => {
   });
 
   it('derives the node PDA from [node, owner, node_id]', () => {
-    // The live node above: its PDA must re-derive from its own owner + id.
+    // Re-derived from the placeholder owner + id (checked against web3.js findProgramAddressSync).
     const id = 'a1b2c3d4' + '00'.repeat(26) + 'beef';
-    expect(nodePda('11111111111111111111111111111111', id)).toBe('2xbdF1vEapF2Gui6qNaSMLXKpupfkWgaGVotzJQtTqKq');
+    expect(nodePda('11111111111111111111111111111111', id)).toBe('4d7F5smMhB84mxjNFn9NqGfjaDimkLncrzSmSis5UKoj');
     expect(nodeUnbondingPda('11111111111111111111111111111111', id)).not.toBe(nodePda('11111111111111111111111111111111', id));
   });
 });

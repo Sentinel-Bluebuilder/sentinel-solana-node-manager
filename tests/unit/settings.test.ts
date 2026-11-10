@@ -129,3 +129,35 @@ describe('settings validation', () => {
     expect(s.priorityFeeMicroLamports).toBe(0);
   });
 });
+
+describe('node image source (0.3.0)', () => {
+  it('defaults to the prebuilt image', async () => {
+    const { getSettings } = await import('../../src/main/services/settings');
+    expect((await getSettings()).nodeImageSource).toBe('prebuilt');
+  });
+
+  it('gives settings from before 0.3.0 (no nodeImageSource) the prebuilt image', async () => {
+    await fs.writeFile(path.join(tmp, 'settings.json'), JSON.stringify({ priorityFeeMicroLamports: 7, seenOnboarding: true }));
+    const { getSettings } = await import('../../src/main/services/settings');
+    const s = await getSettings();
+    expect(s.nodeImageSource).toBe('prebuilt');
+    expect(s.priorityFeeMicroLamports).toBe(7);
+    expect(s.seenOnboarding).toBe(true);
+  });
+
+  it('repairs an unknown stored value to prebuilt', async () => {
+    await fs.writeFile(path.join(tmp, 'settings.json'), JSON.stringify({ nodeImageSource: 'registry' }));
+    const { getSettings } = await import('../../src/main/services/settings');
+    expect((await getSettings()).nodeImageSource).toBe('prebuilt');
+  });
+
+  it('accepts source and back, refuses anything else', async () => {
+    const { getSettings, updateSettings } = await import('../../src/main/services/settings');
+    await updateSettings({ nodeImageSource: 'source' });
+    expect((await getSettings()).nodeImageSource).toBe('source');
+    await updateSettings({ nodeImageSource: 'prebuilt' });
+    expect((await getSettings()).nodeImageSource).toBe('prebuilt');
+    await expect(updateSettings({ nodeImageSource: 'docker-hub' } as never)).rejects.toThrow(/nodeImageSource must be one of prebuilt, source/);
+    expect((await getSettings()).nodeImageSource).toBe('prebuilt');
+  });
+});

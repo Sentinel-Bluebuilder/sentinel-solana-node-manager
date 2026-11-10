@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_PRIORITY_FEE_MICRO_LAMPORTS, DEFAULT_RPC_POOL } from './chain';
 import { httpRpcHostAllowed } from './validate';
-import type { AppSettings } from '../../shared/types';
+import { NODE_IMAGE_SOURCES, type AppSettings, type NodeImageSource } from '../../shared/types';
 
 let cache: AppSettings | null = null;
 
@@ -36,6 +36,7 @@ function defaults(): AppSettings {
   return {
     rpcUrls: [...DEFAULT_RPC_POOL],
     priorityFeeMicroLamports: DEFAULT_PRIORITY_FEE_MICRO_LAMPORTS,
+    nodeImageSource: 'prebuilt',
     upstreamDir: defaultUpstreamDir(),
     dockerSocket: '',
     seenOnboarding: false,
@@ -86,6 +87,8 @@ export async function getSettings(): Promise<AppSettings> {
       if (typeof cache[k] !== 'boolean') (cache as unknown as Record<string, unknown>)[k] = d[k];
     }
     cache.priorityFeeMicroLamports = clampInt(cache.priorityFeeMicroLamports, 0, PRIORITY_FEE_MAX, d.priorityFeeMicroLamports);
+    // Settings from before 0.3.0 have no image source: they get the prebuilt image.
+    if (!NODE_IMAGE_SOURCES.includes(cache.nodeImageSource)) cache.nodeImageSource = d.nodeImageSource;
     if (typeof cache.upstreamDir !== 'string' || !cache.upstreamDir.trim()) cache.upstreamDir = d.upstreamDir;
     if (typeof cache.dockerSocket !== 'string') cache.dockerSocket = d.dockerSocket;
     cache.nodeRefreshIntervalSec = clampInt(
@@ -109,6 +112,7 @@ export async function getSettings(): Promise<AppSettings> {
 const ALLOWED_SETTINGS_KEYS: ReadonlySet<keyof AppSettings> = new Set([
   'rpcUrls',
   'priorityFeeMicroLamports',
+  'nodeImageSource',
   'upstreamDir',
   'dockerSocket',
   'seenOnboarding',
@@ -206,6 +210,11 @@ async function checkSettingsPatch(raw: unknown, current: AppSettings): Promise<P
       out[k] = wholeNumberIn(key, value, WALLET_REFRESH_MIN_SEC, WALLET_REFRESH_MAX_SEC);
     } else if (k === 'nodeRefreshIntervalSec') {
       out[k] = wholeNumberIn(key, value, NODE_REFRESH_MIN_SEC, NODE_REFRESH_MAX_SEC);
+    } else if (k === 'nodeImageSource') {
+      if (!NODE_IMAGE_SOURCES.includes(value as NodeImageSource)) {
+        throw new Error(`nodeImageSource must be one of ${NODE_IMAGE_SOURCES.join(', ')} (got ${JSON.stringify(value)}).`);
+      }
+      out[k] = value;
     } else if (k === 'upstreamDir') {
       if (typeof value !== 'string') throw new Error('upstreamDir must be a folder path.');
       const dir = value.trim();

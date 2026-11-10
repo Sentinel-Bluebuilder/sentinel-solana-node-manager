@@ -557,9 +557,9 @@ type ProtocolOption = {
 
 /** All six protocols the Solana dvpn program advertises (on-chain bitmask). */
 export const PROTOCOL_OPTIONS: ProtocolOption[] = [
-  { id: 'wireguard', label: 'WireGuard', logo: '/brand/protocols/wireguard.svg', blurb: 'Fast, UDP, kernel VPN. The default.' },
-  { id: 'amneziawg', label: 'AmneziaWG', logo: '/brand/protocols/amneziawg.svg', blurb: 'WireGuard with obfuscated handshakes.' },
-  { id: 'v2ray', label: 'V2Ray', logo: '/brand/protocols/v2ray.png', blurb: 'TLS proxy over WebSocket / gRPC.' },
+  { id: 'wireguard', label: 'WireGuard', logo: './brand/protocols/wireguard.svg', blurb: 'Fast, UDP, kernel VPN. The default.' },
+  { id: 'amneziawg', label: 'AmneziaWG', logo: './brand/protocols/amneziawg.svg', blurb: 'WireGuard with obfuscated handshakes.' },
+  { id: 'v2ray', label: 'V2Ray', logo: './brand/protocols/v2ray.png', blurb: 'TLS proxy over WebSocket / gRPC.' },
   { id: 'xray', label: 'Xray', icon: 'bolt', blurb: 'Faster V2Ray fork (VLESS / VMess).' },
   { id: 'openvpn', label: 'OpenVPN', icon: 'vpn_lock', blurb: 'The classic, works almost everywhere.' },
   { id: 'hysteria2', label: 'Hysteria2', icon: 'speed', blurb: 'QUIC; built for lossy, long links.' },

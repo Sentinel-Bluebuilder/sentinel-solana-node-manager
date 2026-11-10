@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MIcon } from '../components/MIcon';
+import { GetStarted } from '../components/GetStarted';
 import { useApp } from '../store/app';
 import { fmtDVPN, relativeTime } from '../lib/format';
 
@@ -60,6 +61,7 @@ export function Overview() {
 
   return (
     <div className="flex flex-col gap-4">
+      <GetStarted />
       {/* Hero */}
       <div
         className="relative"

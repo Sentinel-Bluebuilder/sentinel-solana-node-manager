@@ -559,12 +559,21 @@ export interface ChainHealth {
   error?: string;
 }
 
+export type NodeImageSource = 'prebuilt' | 'source';
+export const NODE_IMAGE_SOURCES: readonly NodeImageSource[] = ['prebuilt', 'source'];
+
 export interface AppSettings {
   /** Solana JSON-RPC URLs, tried in order. */
   rpcUrls: string[];
   /** Compute-unit price added to every app-sent transaction. 0 = none. */
   priorityFeeMicroLamports: number;
-  /** Patched sentinel-solana `upstream/` tree used as the node image build context. */
+  /**
+   * Where the node image comes from. `prebuilt` (default): the release's checksum-pinned
+   * image file is downloaded and loaded into Docker — no source, no build. `source`: built
+   * from the sentinel-solana tree in `upstreamDir` (developers).
+   */
+  nodeImageSource: NodeImageSource;
+  /** sentinel-solana source tree used as the node image build context (source mode only). */
   upstreamDir: string;
   /** Explicit override — if blank the app probes the Docker daemon. */
   dockerSocket: string;

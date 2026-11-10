@@ -6,6 +6,10 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
+import { PREBUILT_IMAGE_SOURCE, PREBUILT_IMAGE_TAG, remoteLoadScript } from './prebuilt-image';
+
+/** Download + load of the prebuilt image on a server (slow links included). */
+const PREBUILT_REMOTE_TIMEOUT_MS = 30 * 60_000;
 import {
   buildRecipe,
   imageBuildArgs,
@@ -374,6 +378,23 @@ class RemoteRuntime implements NodeRuntime {
 
   async buildImage(onLog: (line: string) => void, signal?: AbortSignal): Promise<void> {
     await this.ensureDocker(onLog);
+    if (this.imageTag === PREBUILT_IMAGE_TAG) {
+      // Prebuilt image: the server downloads its CPU's image file, checks the pinned SHA-256
+      // and loads it. No build context upload, no buildx.
+      onLog(`[remote] downloading the node image on ${this.label} (one time) and checking its checksum`);
+      const r = await this.sh('bash -s', PREBUILT_REMOTE_TIMEOUT_MS, {
+        stdin: remoteLoadScript(`${this.sudo}docker`),
+        signal,
+        onLog: (l: string) => {
+          if (l.trim()) onLog(`[remote] ${l.trim()}`);
+        },
+      });
+      if (r.exitCode !== 0 || !r.output.includes('PREBUILT_OK')) {
+        throw new Error(`Loading the node image on ${this.label} failed (exit ${r.exitCode}): ${r.output.trim().slice(-600)}`);
+      }
+      onLog(`[remote] ${PREBUILT_IMAGE_TAG} ready on ${this.label} (${PREBUILT_IMAGE_SOURCE})`);
+      return;
+    }
     // Fail before the upload when BuildKit's buildx plugin is missing (stock docker.io, Q0394).
     const bx = await this.sh(this.docker(['buildx', 'version']), 30_000);
     if (bx.exitCode !== 0) throw buildxMissingError(this.label, bx.output);

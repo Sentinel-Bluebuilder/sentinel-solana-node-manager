@@ -135,6 +135,13 @@ echo "STEP session-start"
 # Newer dvpnctl (ddv18.32+) moved client sessions under "client" and renamed the escrow flag.
 if $C client --help >/dev/null 2>&1; then S="client"; EF="--escrow-base-units"; else S="session"; EF="--escrow"; fi
 OUT=$($C $S start $CI --node "$NODE" --new-channel --mode voucher $EF "$ESCROW" 2>&1); RC=$?
+# A host outside our network reaches Solana through public devnet, which answers bursts with
+# 429 "rate limits exceeded" (e2e 11-10, arm64 VPS). Retry once after a pause, as a real client
+# would; a channel the failed try opened is found by the before/after channel diff and swept.
+if [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -qiE 'rate limit|429'; then
+  echo "RETRY session-start after an RPC rate limit"; sleep 15
+  OUT=$($C $S start $CI --node "$NODE" --new-channel --mode voucher $EF "$ESCROW" 2>&1); RC=$?
+fi
 echo "SESSION_START_RC $RC"
 echo "SESSION_START_BEGIN"; echo "$OUT"; echo "SESSION_START_END"
 SID=$(echo "$OUT" | grep -oE '"(id|session_id|sessionId)": *"[^"]+"' | head -1 | sed -E 's/.*: *"([^"]+)"/\1/')

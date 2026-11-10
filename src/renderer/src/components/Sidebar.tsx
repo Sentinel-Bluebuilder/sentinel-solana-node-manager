@@ -115,7 +115,7 @@ export function Sidebar() {
     >
       <div className={`drag-region px-5 ${headerPad} pb-5 flex items-center gap-3 flex-shrink-0`}>
         <img
-          src="/brand/sentinel-shield-transparent.png"
+          src="./brand/sentinel-shield-transparent.png"
           alt="Sentinel"
           width={34}
           height={34}

@@ -38,7 +38,7 @@ describe('plain http RPC hosts', () => {
   });
 
   it('refuses public addresses, edge ranges and hostnames', () => {
-    for (const h of ['203.0.113.9', '172.15.0.1', '172.32.0.1', '192.169.0.1', '8.8.8.8', 'devnet.helius-rpc.com', 'gate.internal', '10.0.0.256']) {
+    for (const h of ['9.9.9.9', '172.15.0.1', '172.32.0.1', '192.169.0.1', '8.8.8.8', 'devnet.helius-rpc.com', 'gate.internal', '10.0.0.256']) {
       expect(httpRpcHostAllowed(h)).toBe(false);
     }
   });
@@ -47,7 +47,7 @@ describe('plain http RPC hosts', () => {
 /** The final client refuses non-public node addresses, so a local deploy publishes the public IP. */
 describe('public IPv4', () => {
   it('accepts internet-routable addresses', () => {
-    for (const ip of ['203.0.113.9', '8.8.8.8', '1.1.1.1', '172.32.0.1', '100.128.0.1']) expect(isPublicIPv4(ip)).toBe(true);
+    for (const ip of ['9.9.9.9', '8.8.8.8', '1.1.1.1', '172.32.0.1', '100.128.0.1']) expect(isPublicIPv4(ip)).toBe(true);
   });
 
   it('refuses private, shared, link-local, test and reserved ranges', () => {
@@ -61,7 +61,7 @@ describe('public IPv4', () => {
 describe('RPC reachable from a remote host', () => {
   it('flags loopback and private-network RPC URLs as local-only', () => {
     for (const u of ['http://127.0.0.1:8899/c/tok', 'http://10.0.0.5:8899/c/tok', 'https://192.168.1.2', 'http://localhost:8899']) expect(rpcIsLocalOnly(u)).toBe(true);
-    for (const u of ['https://api.devnet.solana.com', 'https://devnet.helius-rpc.com/?api-key=x', 'https://203.0.113.9:8899']) expect(rpcIsLocalOnly(u)).toBe(false);
+    for (const u of ['https://api.devnet.solana.com', 'https://devnet.helius-rpc.com/?api-key=x', 'https://9.9.9.9:8899']) expect(rpcIsLocalOnly(u)).toBe(false);
   });
 
   it('messages show the host only, never a token or key', () => {

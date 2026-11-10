@@ -12,6 +12,7 @@ import {
   protocolInfo,
 } from './chain';
 import { CTL_HOME, NODE_HOME, dockerHealth, resolveImageTag } from './docker';
+import { PREBUILT_IMAGE_TAG } from './prebuilt-image';
 import { pickRPC } from './solana-client';
 import { getSettings } from './settings';
 import { readStore, writeStore } from './store';
@@ -403,6 +404,10 @@ async function runDeploy(
     await updateNode(node.id, { imageTag: rt.imageTag });
     if (await rt.imageReady()) {
       push('image-build', 30, 'Node image ready', `[${ts()}] ${rt.imageTag} present on ${rt.label}`);
+    } else if (rt.imageTag === PREBUILT_IMAGE_TAG) {
+      push('image-build', 12, 'Downloading node image', `[${ts()}] ${rt.imageTag}: one-time download, checksum-checked (a few minutes)`);
+      await rt.buildImage((line) => push('image-build', 20, 'Downloading node image', line), signal);
+      push('image-build', 30, 'Node image ready', `[${ts()}] image ready`);
     } else {
       push('image-build', 12, 'Building node image', `[${ts()}] ${rt.imageTag}: compiles dvpnd + dvpnctl + protocol binaries (10–20 min)`);
       await rt.buildImage((line) => push('image-build', 20, 'Building node image', line), signal);

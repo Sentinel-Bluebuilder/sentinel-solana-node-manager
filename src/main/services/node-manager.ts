@@ -520,8 +520,15 @@ async function patchAndRestart(node: DeployedNode, mutate: (toml: string) => str
   await updateNode(node.id, { runtimeId, startedAt: new Date().toISOString(), status: 'loading' });
 }
 
+/**
+ * After a config change the daemon restarts and re-syncs the node on chain (re-list, prices,
+ * protocol) one transaction at a time. On a small server (2 vCPU arm64, e2e 11-10) that took over
+ * 180 s although it landed, so the app reported a failed change that had succeeded.
+ */
+const CHAIN_SYNC_WAIT_MS = 360_000;
+
 /** Wait until the chain shows `pred` for this node (the daemon's start-up sync landed). */
-async function waitForChain(node: DeployedNode, pred: (c: ChainNode) => boolean, what: string, timeoutMs = 180_000): Promise<ChainNode> {
+async function waitForChain(node: DeployedNode, pred: (c: ChainNode) => boolean, what: string, timeoutMs = CHAIN_SYNC_WAIT_MS): Promise<ChainNode> {
   const deadline = Date.now() + timeoutMs;
   let last: ChainNode | null = null;
   let readError: string | undefined;

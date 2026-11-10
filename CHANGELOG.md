@@ -2,6 +2,27 @@
 
 The earlier Cosmos-era app is a separate project and is not part of this repository.
 
+## 0.3.0 — installers and one-download node image (2026-11-10)
+
+- **Installers:** Windows one-click setup (x64, arm64; per user, no admin prompt, opens when done) and a
+  portable x64 exe; macOS dmg + zip (Apple silicon, Intel); Linux AppImage, deb and rpm (x64, arm64).
+- **No source or build needed to deploy:** each host downloads the published node image for its CPU once,
+  checks its SHA-256 against the hash pinned in the app and loads it into Docker (daemon cut final6.5,
+  90014b2). On a server over SSH this needs no build context upload and no buildx.
+- Settings → Node image: "Download the prebuilt image" (default) or "Build from source" (developers;
+  the source folder shows only in that mode). Settings from older versions get the prebuilt image.
+- Get started card on Overview until the first node exists: wallet → funding (live balance, copy
+  address) → where the node runs (Docker check with Start / Get Docker Desktop / Check again) → deploy.
+- Deploy over SSH: the Deploy button tests the connection itself (no separate Test click needed); a
+  server that does not answer stops the deploy before anything is funded.
+- After a price or protocol change the app waits up to 6 minutes for the chain to show it (was 3; a
+  small server took longer and the app reported a change that had succeeded as failed).
+- In-app paid test retries session start once after a public-devnet rate limit (HTTP 429).
+- Packaging fixes found by the install tests: every @solana package is in the app (electron-builder
+  26), Linux deb/rpm declare the ALSA and GBM libraries Electron needs, logos load in installed apps,
+  and the ssh2 native add-on (not buildable for Electron 39) is left out in favour of its JavaScript code.
+- arm64 Linux ships deb and rpm only: the arm64 AppImage runtime needs a library desktop systems lack.
+
 ## 0.2.0 RC1 (2026-11-08)
 
 - Release candidate built against fork cut `fork-cb33-4-final6.1` (`02b22fc`); no RC2 build exists for this product.

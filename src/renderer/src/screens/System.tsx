@@ -641,12 +641,12 @@ function CapacityCard({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
           <UserCountTile
             protocol="WireGuard"
-            logo="/brand/protocols/wireguard.svg"
+            logo="./brand/protocols/wireguard.svg"
             est={cap.wireguard}
           />
           <UserCountTile
             protocol="V2Ray"
-            logo="/brand/protocols/v2ray.png"
+            logo="./brand/protocols/v2ray.png"
             est={cap.v2ray}
           />
         </div>

@@ -1,5 +1,7 @@
 appId: com.sentinel.nodemanager.solana
 productName: Sentinel Node Manager Solana
+# One name pattern for every installer: Sentinel-Node-Manager-0.3.0-win-x64.exe, -mac-arm64.dmg, -linux-x64.deb …
+artifactName: Sentinel-Node-Manager-${version}-${os}-${arch}.${ext}
 
 # No publish channel: auto-update is disabled (see src/main/services/updater.ts).
 directories:
@@ -9,6 +11,11 @@ directories:
 files:
   - out/**/*
   - package.json
+  # ssh2's optional native crypto add-on cannot be built for Electron 39 (its binding uses
+  # v8::Context::GetIsolate, which Electron removed), so the file left in node_modules is a
+  # plain-Node build that fails to load ("did not self-register"). Ship none; ssh2 uses its
+  # JavaScript crypto, which completes SSH handshakes (checked on macOS x64).
+  - '!node_modules/ssh2/lib/protocol/crypto/build/**'
 
 extraResources:
   # Licence notices for the npm packages the app ships (tools/gen-notices.mjs).
@@ -46,28 +53,64 @@ dmg:
 
 win:
   icon: build/icon.ico
+  # Windows is cross-built on Linux: these optional native add-ons come out as Linux .node files
+  # there, which Windows cannot load. Leaving them out makes ssh2 / bigint-buffer use their
+  # JavaScript fallbacks. better-sqlite3 is not optional and is rebuilt for Windows per arch.
+  # A platform `files` list made only of '!' patterns makes electron-builder fall back to **/*
+  # (the whole repo). Repeat the top-level positives first.
+  files:
+    - out/**/*
+    - package.json
+    - '!node_modules/bigint-buffer/build/**'
+    - '!node_modules/cpu-features/build/**'
+    - '!node_modules/ssh2/lib/protocol/crypto/build/**'
   target:
     - target: nsis
-      arch: [x64]
+      arch: [x64, arm64]
     - target: portable
       arch: [x64]
   verifyUpdateCodeSignature: false
 
+# Few clicks: one-click, per-user install (no admin prompt), Desktop + Start-menu shortcut,
+# the app opens when setup finishes. Uninstall from Settings → Apps keeps the wallet/settings.
 nsis:
-  oneClick: false
+  oneClick: true
   perMachine: false
-  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
   shortcutName: Sentinel Node Manager
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  artifactName: Sentinel-Node-Manager-${version}-win-${arch}-setup.${ext}
+
+portable:
+  artifactName: Sentinel-Node-Manager-${version}-win-${arch}-portable.${ext}
 
 linux:
   icon: build/icon.png
   category: Network
+  synopsis: Host Sentinel dVPN nodes on Solana devnet
   maintainer: Sentinel Node Manager Solana <noreply@users.noreply.github.com>
   target:
+    # AppImage is x64 only: electron-builder's arm64 AppImage runtime links the unversioned
+    # libz.so (a zlib dev-package symlink), so it fails to start on a clean arm64 desktop
+    # (L6 11-10). arm64 Linux gets deb + rpm, which pass on clean Ubuntu, Debian and Fedora.
     - target: AppImage
       arch: [x64]
     - target: deb
-      arch: [x64]
+      arch: [x64, arm64]
+    - target: rpm
+      arch: [x64, arm64]
+
+# The wallet is encrypted with the system keyring (Secret Service via libsecret). A custom list
+# replaces electron-builder's defaults, so it must also name what Electron itself loads: ALSA and
+# GBM. Without them a clean Ubuntu 24.04 / Debian 12 install fails at launch with
+# "libasound.so.2: cannot open shared object file" (L4 11-10). Ubuntu 24.04 renamed ALSA to
+# libasound2t64, hence the alternative.
+deb:
+  depends: [libsecret-1-0, libnss3, libgtk-3-0, libnotify4, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, 'libasound2t64 | libasound2', libgbm1]
+rpm:
+  depends: [libsecret, nss, gtk3, libnotify, libXScrnSaver, libXtst, xdg-utils, at-spi2-core, libuuid, alsa-lib, mesa-libgbm]
 
 asar: true
 asarUnpack:

@@ -2,9 +2,11 @@ import Docker from 'dockerode';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { log } from './logger';
+import { PREBUILT_IMAGE_SOURCE, PREBUILT_IMAGE_TAG, checkImageHash, prebuiltAssetFor, sizeText } from './prebuilt-image';
 import { getSettings } from './settings';
 import { MINT, PROGRAM_ID } from './chain';
 import { BUILD_MODULES, imageTagFrom, modulesFor, sourceFingerprint, sourceKind, sourceVersion, type SourceKind } from './image-source';
@@ -93,7 +95,9 @@ export async function imageBuildArgs(): Promise<Record<string, string>> {
  * instead of silently running the old dvpnd.
  */
 export async function resolveImageTag(): Promise<string> {
-  const { upstreamDir } = await getSettings();
+  const { upstreamDir, nodeImageSource } = await getSettings();
+  // Default: the checksum-pinned prebuilt image (no source folder needed).
+  if (nodeImageSource !== 'source') return PREBUILT_IMAGE_TAG;
   let fp: string;
   try {
     fp = await sourceFingerprint(upstreamDir);
@@ -121,7 +125,7 @@ export async function chainCtlImageTag(): Promise<string> {
 /**
  * Local image for a node's own dvpnctl calls (they always run on LOCAL Docker). A
  * remote node's image lives on its VPS; then the current source's image is used and
- * built here once if missing (see ctlImageChoice). Concurrent callers share one build.
+ * fetched here once if missing: downloaded in prebuilt mode, built in source mode (see ctlImageChoice). Concurrent callers share one build.
  */
 const ctlBuilds = new Map<string, Promise<void>>();
 export async function localCtlImageTag(nodeTag: string | undefined): Promise<string> {
@@ -133,8 +137,8 @@ export async function localCtlImageTag(nodeTag: string | undefined): Promise<str
   if (choice.build && !(await hasImage(choice.tag))) {
     let p = ctlBuilds.get(choice.tag);
     if (!p) {
-      log.info('building the chain-call image locally (the node image is not on this machine)', { nodeTag, tag: choice.tag });
-      p = ensureImage(choice.tag, (line) => log.debug('ctl image build', { line })).finally(() => ctlBuilds.delete(choice.tag));
+      log.info('getting the chain-call image on this machine (download or build, per Settings → Node image)', { nodeTag, tag: choice.tag });
+      p = ensureImage(choice.tag, (line) => log.debug('ctl image', { line })).finally(() => ctlBuilds.delete(choice.tag));
       ctlBuilds.set(choice.tag, p);
     }
     await p;
@@ -417,6 +421,7 @@ export async function ensureImage(
 ): Promise<void> {
   if (await hasImage(tag)) return;
   if (signal?.aborted) throw new Error('Image build aborted before start');
+  if (tag === PREBUILT_IMAGE_TAG) return loadPrebuiltImage(onLog, signal);
   const { upstreamDir } = await getSettings();
   try {
     await fs.access(path.join(upstreamDir, 'sentinel-dvpnd', 'go.mod'));
@@ -495,6 +500,84 @@ export async function ensureImage(
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch((err) => {
       log.warn('docker build temp cleanup failed', { tmpDir, err: String(err) });
+    });
+  }
+}
+
+// ─── Prebuilt image: download, verify, load ───
+
+const PREBUILT_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Download this computer's prebuilt image file, check its pinned SHA-256 while it streams to
+ * a temp file, then load it into Docker. A wrong hash deletes the file and fails the deploy.
+ */
+export async function loadPrebuiltImage(onLog: (line: string) => void, signal?: AbortSignal): Promise<void> {
+  const c = await getClient();
+  const info = (await c.info()) as { Architecture?: string };
+  const asset = prebuiltAssetFor(info.Architecture ?? os.arch());
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dvpnd-image-'));
+  const file = path.join(tmpDir, asset.file);
+  onLog(`[image] downloading the node image for ${asset.arch} (${sizeText(asset.bytes)}, one time): ${asset.url}`);
+  try {
+    const ac = new AbortController();
+    const onAbort = () => ac.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => ac.abort(), PREBUILT_DOWNLOAD_TIMEOUT_MS);
+    try {
+      const res = await fetch(asset.url, { signal: ac.signal, redirect: 'follow' });
+      if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status} ${res.statusText} for ${asset.url}`);
+      const hash = createHash('sha256');
+      const out = createWriteStream(file);
+      let got = 0;
+      let lastPct = -10;
+      const total = Number(res.headers.get('content-length')) || asset.bytes;
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        hash.update(value);
+        got += value.length;
+        if (!out.write(value)) await new Promise<void>((r) => out.once('drain', () => r()));
+        const pct = total ? Math.floor((got / total) * 100) : 0;
+        if (total && pct >= lastPct + 10) {
+          lastPct = pct;
+          onLog(`[image] ${pct}% (${Math.round(got / 1e6)} of ${Math.round(total / 1e6)} MB)`);
+        }
+      }
+      await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
+      checkImageHash(asset, hash.digest('hex'));
+      onLog(`[image] checksum OK (${asset.sha256.slice(0, 12)}…)`);
+    } catch (err) {
+      if (signal?.aborted) throw new Error('Image download aborted');
+      if (ac.signal.aborted) throw new Error(`Image download timed out after ${PREBUILT_DOWNLOAD_TIMEOUT_MS / 60_000} minutes.`);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+    onLog('[image] loading into Docker');
+    const stream = await c.loadImage(createReadStream(file));
+    await new Promise<void>((resolve, reject) => {
+      c.modem.followProgress(
+        stream,
+        (err: Error | null, events: { error?: string; stream?: string }[]) => {
+          const failed = err?.message ?? events?.find((e) => e.error)?.error;
+          if (failed) reject(new Error(`docker load failed: ${failed}`));
+          else resolve();
+        },
+        (e: { stream?: string }) => {
+          if (e.stream?.trim()) onLog(`[image] ${e.stream.trim()}`);
+        },
+      );
+    });
+    if (!(await hasImage(PREBUILT_IMAGE_TAG))) {
+      throw new Error(`The image file loaded but ${PREBUILT_IMAGE_TAG} is not in Docker. Deploy again; if it repeats, report it.`);
+    }
+    onLog(`[image] ${PREBUILT_IMAGE_TAG} ready (${PREBUILT_IMAGE_SOURCE})`);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch((err) => {
+      log.warn('prebuilt image temp cleanup failed', { tmpDir, err: String(err) });
     });
   }
 }

@@ -7,23 +7,40 @@ program** (devnet), on this machine (Docker Desktop) or on a VPS over SSH.
 |---|---|
 | Program | `J52dyXW3a6mkatvrQct3fo6dA9vqUtcsdBt5gGqrTBXs` |
 | Token | tDVPN, Token-2022 mint `Hen2LVP6KooGaXEvdSyCHWghsEY4gLLn7wix8z6zHFSa`, 6 decimals |
-| Node image | `node-manager/dvpnd:devnet` — `dvpnd` + `dvpnctl` + every protocol binary |
+| Node image | `node-manager/dvpnd:prebuilt-0.3.0` — `dvpnd` + `dvpnctl` + every protocol binary, linux amd64 + arm64 |
 | Protocols | WireGuard, AmneziaWG, V2Ray, Xray, OpenVPN, Hysteria2 |
 
 ## Download
 
 Latest release: [**Releases**](https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/latest)
 
-| What | Linux x86_64 | Linux arm64 |
+| System | File | Install |
 |---|---|---|
-| Node daemon `sentinel-dvpnd` | `sentinel-dvpnd-linux-amd64` | `sentinel-dvpnd-linux-arm64` |
-| Node CLI `sentinel-dvpn` | `sentinel-dvpn-linux-amd64` | `sentinel-dvpn-linux-arm64` |
+| Windows 10/11 x64 | `Sentinel-Node-Manager-0.3.0-win-x64-setup.exe` | Run it. One click, no admin prompt; the app opens when setup ends |
+| Windows 11 arm64 | `Sentinel-Node-Manager-0.3.0-win-arm64-setup.exe` | Same as x64 |
+| Windows, no install | `Sentinel-Node-Manager-0.3.0-win-x64-portable.exe` | Run it from any folder |
+| macOS Apple silicon | `Sentinel-Node-Manager-0.3.0-mac-arm64.dmg` (or `.zip`) | Open, drag to Applications |
+| macOS Intel | `Sentinel-Node-Manager-0.3.0-mac-x64.dmg` (or `.zip`) | Open, drag to Applications |
+| Ubuntu / Debian | `Sentinel-Node-Manager-0.3.0-linux-amd64.deb` / `-linux-arm64.deb` | `sudo apt install ./<file>.deb` |
+| Fedora / RHEL | `Sentinel-Node-Manager-0.3.0-linux-x86_64.rpm` / `-linux-aarch64.rpm` | `sudo dnf install ./<file>.rpm` |
+| Any Linux x86_64 | `Sentinel-Node-Manager-0.3.0-linux-x86_64.AppImage` | `chmod +x <file>.AppImage`, then run it (arm64: use the deb or rpm) |
 
-The desktop app is built from source (see **Run** and **Build from source**). The release carries the daemon and
-CLI binaries the app deploys onto nodes, plus `SHA256SUMS` and the third-party notices.
+> **Devnet only, unsigned builds.** Tokens on Solana devnet have no value. The installers are not code-signed:
+> on Windows choose *More info → Run anyway*; on macOS right-click the app → *Open* the first time.
+> Verify downloads: `sha256sum -c --ignore-missing SHA256SUMS` (SHA256SUMS and the files in one folder).
 
-> **Devnet only, unsigned builds.** Tokens on Solana devnet have no value. Verify downloads:
-> `sha256sum -c --ignore-missing SHA256SUMS` (SHA256SUMS and the files in one folder).
+**First node in a few clicks:** create a wallet → send it devnet SOL + tDVPN (0.06 SOL and 1 tDVPN per node; the
+Get started card shows the address and the live balance) → *Host on this computer* or *Host on a server (SSH)* →
+Deploy. No source code and no build: the app downloads the node image once (about 90 MB), checks its SHA-256
+against the hash pinned in the app, and loads it into Docker.
+
+- **This computer** needs Docker: Docker Desktop on Windows/macOS, Docker Engine on Linux.
+- **A server over SSH** needs a Linux server (x86_64 or arm64) you can reach over SSH; the app installs Docker there
+  if it is missing.
+
+**Node server files** (also on the release, for running a node without the app): `sentinel-dvpnd-linux-{amd64,arm64}`
+(daemon), `sentinel-dvpn-linux-{amd64,arm64}` (CLI), and the node images
+`sentinel-dvpnd-image-0.3.0-linux-{amd64,arm64}.tar.gz` (`gunzip -c <file> | docker load`).
 
 Test results and known issues:
 [sentinel-solana-dvpn-testing-tools](https://github.com/Sentinel-Bluebuilder/sentinel-solana-dvpn-testing-tools)
@@ -69,8 +86,8 @@ npm install
 npm run dev            # or: powershell scripts/restart-dev.ps1 (CLI server on)
 ```
 
-The node image builds on first deploy from the patched sentinel-solana tree
-(Settings → Node image source, default: a checkout of the Sentinel Solana source).
+By default the node image is downloaded (see **Download**). Developers can build it from a Sentinel Solana
+source checkout instead: Settings → Node image → *Build from source*, then set the source folder.
 
 ## CLI and end-to-end test
 
@@ -98,8 +115,8 @@ Function-by-function map from the Cosmos app: `docs/SOLANA-MAPPING.md`.
 
 Built on Sentinel. https://sentinel.co
 
-- The node daemon and CLI that the app builds into the node image come from the Sentinel source
-  tree and are under the **Sentinel dVPN License**. They are not part of this repository. The image
+- The node daemon and CLI inside the node image (and the server files on the release) come from the Sentinel source
+  tree and are under the **Sentinel dVPN License**. Their source is not part of this repository. The image
   carries their licence and the licences of its other programs (Xray-core MPL-2.0, Hysteria, hnsd,
   amneziawg-tools GPL-2.0, amneziawg-go, wireguard-go) at `/usr/share/licenses/node-image/`.
 - npm packages the app ships: `THIRD-PARTY-NOTICES.md`. Regenerate it with
