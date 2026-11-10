@@ -62,11 +62,13 @@ function secretPath(): string {
 
 async function requireEncryption(): Promise<void> {
   if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error(
-      'This computer cannot safely save your wallet key. ' +
-        'On Linux, turn on a system keyring (such as gnome-keyring or kwallet) and try again. ' +
-        'On Windows and macOS this normally works automatically — please make sure you are signed in to your user account.',
-    );
+    const fix =
+      process.platform === 'linux'
+        ? 'Turn on a system keyring (such as gnome-keyring or KWallet), then try again.'
+        : process.platform === 'darwin'
+          ? 'Open the app from Finder or the Dock while signed in to your Mac (the login keychain must be unlocked), then try again.'
+          : 'Sign in to your Windows user account and open the app normally (not as another user), then try again.';
+    throw new Error(`This computer cannot safely save your wallet key. ${fix}`);
   }
 }
 

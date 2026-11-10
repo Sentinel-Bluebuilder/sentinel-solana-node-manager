@@ -560,9 +560,9 @@ export const PROTOCOL_OPTIONS: ProtocolOption[] = [
   { id: 'wireguard', label: 'WireGuard', logo: './brand/protocols/wireguard.svg', blurb: 'Fast, UDP, kernel VPN. The default.' },
   { id: 'amneziawg', label: 'AmneziaWG', logo: './brand/protocols/amneziawg.svg', blurb: 'WireGuard with obfuscated handshakes.' },
   { id: 'v2ray', label: 'V2Ray', logo: './brand/protocols/v2ray.png', blurb: 'TLS proxy over WebSocket / gRPC.' },
-  { id: 'xray', label: 'Xray', icon: 'bolt', blurb: 'Faster V2Ray fork (VLESS / VMess).' },
-  { id: 'openvpn', label: 'OpenVPN', icon: 'vpn_lock', blurb: 'The classic, works almost everywhere.' },
-  { id: 'hysteria2', label: 'Hysteria2', icon: 'speed', blurb: 'QUIC; built for lossy, long links.' },
+  { id: 'xray', label: 'Xray', logo: './brand/protocols/xray.svg', blurb: 'Faster V2Ray fork (VLESS / VMess).' },
+  { id: 'openvpn', label: 'OpenVPN', logo: './brand/protocols/openvpn.svg', blurb: 'The classic, works almost everywhere.' },
+  { id: 'hysteria2', label: 'Hysteria2', logo: './brand/protocols/hysteria2.svg', blurb: 'QUIC; built for lossy, long links.' },
 ];
 
 export function ProtocolTiles({

@@ -11,6 +11,8 @@ The earlier Cosmos-era app is a separate project and is not part of this reposit
   90014b2). On a server over SSH this needs no build context upload and no buildx.
 - Settings → Node image: "Download the prebuilt image" (default) or "Build from source" (developers;
   the source folder shows only in that mode). Settings from older versions get the prebuilt image.
+- Deploy screen: Xray, OpenVPN and Hysteria2 tiles show their official logos (generic icons before);
+  AmneziaWG uses its small icon (the wordmark was unreadable at tile size).
 - Get started card on Overview until the first node exists: wallet → funding (live balance, copy
   address) → where the node runs (Docker check with Start / Get Docker Desktop / Check again) → deploy.
 - Deploy over SSH: the Deploy button tests the connection itself (no separate Test click needed); a
@@ -22,6 +24,8 @@ The earlier Cosmos-era app is a separate project and is not part of this reposit
   26), Linux deb/rpm declare the ALSA and GBM libraries Electron needs, logos load in installed apps,
   and the ssh2 native add-on (not buildable for Electron 39) is left out in favour of its JavaScript code.
 - arm64 Linux ships deb and rpm only: the arm64 AppImage runtime needs a library desktop systems lack.
+- Windows uninstall removes the setup copy it kept in `%LOCALAPPDATA%` and the empty install folder
+  (the wallet and settings stay).
 
 ## 0.2.0 RC1 (2026-11-08)
 

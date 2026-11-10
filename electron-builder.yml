@@ -81,6 +81,7 @@ nsis:
   shortcutName: Sentinel Node Manager
   runAfterFinish: true
   deleteAppDataOnUninstall: false
+  include: build/installer.nsh
   artifactName: Sentinel-Node-Manager-${version}-win-${arch}-setup.${ext}
 
 portable:
