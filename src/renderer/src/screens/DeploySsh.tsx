@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
+import { HnsDeploySwitch } from '../components/HnsResolverControl';
 import { MIcon } from '../components/MIcon';
 import { useApp } from '../store/app';
 import { ProtocolTiles } from './DeployLocal';
@@ -35,6 +36,7 @@ export function DeploySsh() {
   const [hourlyPrice, setHourlyPrice] = useState('0.001');
   const [leasePrice, setLeasePrice] = useState('0.001');
   const [remoteUrl, setRemoteUrl] = useState('');
+  const [handshakeDns, setHandshakeDns] = useState(false);
 
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<SSHTestResult | null>(null);
@@ -103,6 +105,7 @@ export function DeploySsh() {
             .replace(/^[a-z]+:\/\//i, '')
             .replace(/\/+$/, '') || undefined,
         ssh: creds(),
+        handshakeDns,
       });
       navigate({ name: 'progress', jobId, moniker: moniker.trim(), origin: 'ssh' });
     } catch (e) {
@@ -130,6 +133,8 @@ export function DeploySsh() {
         title="Deploy SSH"
         subtitle="Connect a VPS via SSH. Ubuntu / Debian supported out of the box."
         right={
+          <div className="flex items-center gap-3">
+          <HnsDeploySwitch checked={handshakeDns} onChange={setHandshakeDns} />
           <div className="flex items-center gap-1 p-0.5 rounded-md" style={{ background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
             <button
               className="btn btn-primary btn-sm"
@@ -145,6 +150,7 @@ export function DeploySsh() {
             >
               <MIcon name="grid_view" size={14} /> Batch
             </button>
+          </div>
           </div>
         }
       />

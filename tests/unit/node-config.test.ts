@@ -116,6 +116,23 @@ describe('patchNodeConfig', () => {
     expect(getKey(out, 'redeem', 'threshold')).toBe('1');
     expect(getKey(out, '', 'owner')).toBe('11111111111111111111111111111111');
   });
+
+  it('turns the HNS resolver on and off in [handshake_dns]', () => {
+    const on = patchNodeConfig(NODE, { handshakeDns: true });
+    expect(getKey(on, 'handshake_dns', 'enabled')).toBe('true');
+    // Top-level keys stay top level: the new table goes at the end, never above `service`.
+    expect(getKey(on, '', 'service')).toBe('wireguard');
+    expect(on.indexOf('[handshake_dns]')).toBeGreaterThan(on.indexOf('[sessions]'));
+    const off = patchNodeConfig(on, { handshakeDns: false });
+    expect(getKey(off, 'handshake_dns', 'enabled')).toBe('false');
+    expect(off.match(/\[handshake_dns\]/g)).toHaveLength(1); // replaced in place, no second table
+  });
+
+  it('leaves [handshake_dns] alone when the patch does not mention it', () => {
+    const on = patchNodeConfig(NODE, { handshakeDns: true });
+    expect(getKey(patchNodeConfig(on, { service: 'xray' }), 'handshake_dns', 'enabled')).toBe('true');
+    expect(patchNodeConfig(NODE, { redeemThreshold: 1 })).not.toContain('handshake_dns');
+  });
 });
 
 describe('patchTopConfig', () => {

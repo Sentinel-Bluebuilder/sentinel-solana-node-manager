@@ -10,7 +10,7 @@ import { pickRPC } from './solana-client';
 import { addEvent } from './events';
 import net from 'node:net';
 import { getNode, getSSH, chainNode, redeemNow, nodeAnswersOnHost, nodePorts } from './node-manager';
-import { recordTestChannel, walletChannelsTo } from './test-channels';
+import { autoSweepTestChannels, recordTestChannel, walletChannelsTo } from './test-channels';
 import { RESERVED_RUNTIME_HOME_IDS } from './validate';
 import { log } from './logger';
 import type { DeployedNode, NodeTestResult } from '../../shared/types';
@@ -162,6 +162,18 @@ while [ $TRY -lt 4 ]; do
 done
 echo "ATTEMPTS $TRY"
 echo "DOWNLOADED $BYTES"
+# HNS through the tunnel: the client asks 1.1.1.1; the node redirects port 53 to its split resolver.
+if [ -n "$HNS_PROBE" ] && [ -n "$PROXY" ]; then
+  # V2Ray/Xray: a SOCKS proxy, no tunnel DNS. socks5h hands the NAME to the node, which resolves it
+  # with its own resolver (the split resolver when HNS is on): any HTTP answer = the node resolved it.
+  H1=$(curl -s -m 30 -x "$PROXY" -o /dev/null -w '%{http_code} %{remote_ip}' "http://$HNS_PROBE/" 2>&1); I1=$(curl -s -m 30 -x "$PROXY" -o /dev/null -w '%{http_code}' "http://example.com/" 2>&1)
+  case $H1 in 000*|'') echo "HNS_DNS fail $HNS_PROBE via proxy ($H1)" ;; *) echo "HNS_DNS ok $HNS_PROBE via proxy (http $H1)" ;; esac
+  case $I1 in 000*|'') echo "ICANN_DNS fail via proxy ($I1)" ;; *) echo "ICANN_DNS ok" ;; esac
+elif [ -n "$HNS_PROBE" ]; then
+  H1=$(nslookup "$HNS_PROBE" 1.1.1.1 2>&1); I1=$(nslookup example.com 1.1.1.1 2>&1)
+  if printf '%s' "$H1" | sed -n '/^Name:/,$p' | grep -q '^Address'; then echo "HNS_DNS ok $HNS_PROBE"; else echo "HNS_DNS fail $HNS_PROBE $(printf '%s' "$H1" | tr '\n' ' ' | cut -c1-160)"; fi
+  if printf '%s' "$I1" | sed -n '/^Name:/,$p' | grep -q '^Address'; then echo "ICANN_DNS ok"; else echo "ICANN_DNS fail $(printf '%s' "$I1" | tr '\n' ' ' | cut -c1-160)"; fi
+fi
 echo "STATUS_BEGIN"; $C $S status $CI "$SID" 2>&1; echo "STATUS_END"
 echo "STEP stop"
 $C $S stop $CI "$SID" >/dev/null 2>&1
@@ -212,7 +224,7 @@ function withHostRuntime<T>(node: DeployedNode, fn: (rt: import('./node-runtime'
  */
 const HERE_CLIENT_ID = RESERVED_RUNTIME_HOME_IDS[0];
 
-export async function testNode(nodeId: string, opts: { onStep?: (s: string) => void; clientOn?: 'host' | 'here' } = {}): Promise<NodeTestResult> {
+export async function testNode(nodeId: string, opts: { onStep?: (s: string) => void; clientOn?: 'host' | 'here'; hnsProbe?: boolean } = {}): Promise<NodeTestResult> {
   const clientOn = opts.clientOn ?? 'host';
   const t0 = Date.now();
   const steps: string[] = [];
@@ -261,7 +273,7 @@ export async function testNode(nodeId: string, opts: { onStep?: (s: string) => v
       rt.runOnce(['/bin/sh', '-c'], [CLIENT_SCRIPT], {
       timeoutMs: 6 * 60_000,
       onLog: (chunk) => {
-        for (const line of chunk.split(/\r?\n/)) if (/^(STEP|REACH|SID|ATTEMPTS|DOWNLOADED|FAIL|UNSUPPORTED|FORCED_HAIRPIN)/.test(line)) step(line.trim());
+        for (const line of chunk.split(/\r?\n/)) if (/^(STEP|REACH|SID|ATTEMPTS|DOWNLOADED|FAIL|UNSUPPORTED|FORCED_HAIRPIN|HNS_DNS|ICANN_DNS)/.test(line)) step(line.trim());
       },
       extra: {
         capAdd: ['NET_ADMIN', 'NET_RAW'],
@@ -288,6 +300,8 @@ export async function testNode(nodeId: string, opts: { onStep?: (s: string) => v
           `LAYOUT=${layout}`,
           // An outside client must reach the public URI itself: no hairpin fallback.
           `NO_HAIRPIN=${clientOn === 'here' && node.target === 'remote' ? '1' : ''}`,
+          // HNS on + a tunnel protocol: resolve an HNS name through the tunnel (H2 redirect, 0.3.1).
+          `HNS_PROBE=${node.handshakeDns || opts.hnsProbe ? 'nathan.woodburn' : ''}`,
         ],
       },
     });
@@ -345,6 +359,10 @@ export async function testNode(nodeId: string, opts: { onStep?: (s: string) => v
     result.channel = /"channel"\s*:\s*"([1-9A-HJ-NP-Za-km-z]{32,44})"/.exec(start)?.[1];
     if (result.channel) await recordTestChannel(result.channel, chain.address);
     result.downloadedBytes = Number(/^DOWNLOADED (\d+)/m.exec(out)?.[1] ?? 0);
+    const hnsLine = /^HNS_DNS (ok|fail)/m.exec(out)?.[1];
+    if (hnsLine) result.hnsDns = hnsLine === 'ok';
+    const icannLine = /^ICANN_DNS (ok|fail)/m.exec(out)?.[1];
+    if (icannLine) result.icannDns = icannLine === 'ok';
     const status = between(out, 'STATUS_BEGIN', 'STATUS_END');
     const rx = findNumber(status, ['rx', 'rx_bytes', 'download_bytes', 'downloaded']);
     const tx = findNumber(status, ['tx', 'tx_bytes', 'upload_bytes', 'uploaded']);
@@ -408,5 +426,7 @@ export async function testNode(nodeId: string, opts: { onStep?: (s: string) => v
     }
     result.durationMs = Date.now() - t0;
   }
+  // Fix B: start the escrow close right away (2 h grace for the node to redeem), in the background.
+  if (result.channel) void autoSweepTestChannels({ force: true }).catch((err: unknown) => log.warn('post-test escrow sweep failed', { nodeId, err: (err as Error).message }));
   return result;
 }

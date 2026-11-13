@@ -18,6 +18,7 @@ import {
   type SendTxRequest,
   type UpdateNodePricingRequest,
   type SetProtocolRequest,
+  type SetHandshakeDnsRequest,
 } from '../shared/types';
 import { testSSHConnection } from './services/ssh';
 import { vUUID, validateSSHCredentials, validateHostPort, clampEventLimit } from './services/validate';
@@ -54,13 +55,17 @@ import {
   updateNodePricing,
   reapStuckNow,
   setNodeProtocol,
+  setNodeHandshakeDns,
+  useChainHost,
+  chainHostLabel,
   redeemNow,
   relistNow,
   withdrawBondNow,
+  retryRemovalNow,
   forgetServerNow,
   testNodeSession,
 } from './services/nodes';
-import { sweepTestChannels } from './services/test-channels';
+import { autoSweepTestChannels, sweepTestChannels, testEscrowStatus } from './services/test-channels';
 import {
   closeNodeSession,
   inspectNodeTrust,
@@ -310,9 +315,23 @@ export function registerIpcHandlers(): void {
     enforceRate('nodes-set-protocol', 3, 0.2);
     return setNodeProtocol(vUUID(req?.nodeId, 'node id'), req.serviceType);
   });
+  ipcMain.handle(IPC.CHAIN_HOST_SET, async (_e, creds: SSHCredentials | null) => {
+    enforceRate('chain-host-set', 3, 0.1);
+    return useChainHost(creds ? validateSSHCredentials(creds) : null);
+  });
+  ipcMain.handle(IPC.CHAIN_HOST_GET, () => chainHostLabel());
+  ipcMain.handle(IPC.NODES_SET_HANDSHAKE_DNS, async (_e, req: SetHandshakeDnsRequest) => {
+    enforceRate('nodes-set-hns', 3, 0.2);
+    if (typeof req?.enabled !== 'boolean') throw new Error('enabled must be true or false');
+    return setNodeHandshakeDns(vUUID(req.nodeId, 'node id'), req.enabled);
+  });
   ipcMain.handle(IPC.NODES_REDEEM, (_e, id: string) => redeemNow(vUUID(id, 'node id')));
   ipcMain.handle(IPC.NODES_RELIST, (_e, id: string) => relistNow(vUUID(id, 'node id')));
   ipcMain.handle(IPC.NODES_WITHDRAW_BOND, (_e, id: string) => withdrawBondNow(vUUID(id, 'node id')));
+  ipcMain.handle(IPC.NODES_RETRY_REMOVAL, (_e, id: string) => {
+    enforceRate('retry-removal', 5, 0.2);
+    return retryRemovalNow(vUUID(id, 'node id'));
+  });
   ipcMain.handle(IPC.NODES_FORGET_SERVER, (_e, id: string) => forgetServerNow(vUUID(id, 'node id')));
   ipcMain.handle(IPC.NODES_TEST, (_e, id: string, opts?: { clientOn?: 'host' | 'here' }) => {
     enforceRate('nodes-test', 2, 0.05);
@@ -320,6 +339,11 @@ export function registerIpcHandlers(): void {
     return testNodeSession(vUUID(id, 'node id'), { clientOn });
   });
   ipcMain.handle(IPC.NODES_SWEEP_TEST_CHANNELS, (_e, opts?: { dryRun?: boolean }) => sweepTestChannels({ dryRun: !!opts?.dryRun }));
+  ipcMain.handle(IPC.TEST_ESCROW_STATUS, () => testEscrowStatus());
+  ipcMain.handle(IPC.TEST_ESCROW_RECLAIM, async () => {
+    enforceRate('test-escrow-reclaim', 3, 0.05);
+    return autoSweepTestChannels({ force: true });
+  });
   ipcMain.handle(IPC.NODES_LEASES, (_e, id: string) => nodeLeases(vUUID(id, 'node id')));
   ipcMain.handle(IPC.NODES_SESSIONS, (_e, id: string) => nodeSessions(vUUID(id, 'node id')));
   ipcMain.handle(IPC.NODES_CLOSE_SESSION, (_e, id: string, sid: string) => {

@@ -7,6 +7,8 @@ import {
   CTL_HOME,
   chainCtlImageTag,
   isRunning,
+  containerName,
+  removeContainer as removeLocalContainer,
   localCtlImageTag,
   withDockerTimeout,
 } from './docker';
@@ -16,6 +18,7 @@ import {
   chainCtlPlace,
   chainWaitTimeoutMessage,
   keyedSerial,
+  keyedExclusive,
   statusWhileRemoving,
   remoteFallbackError,
   firstRemovalStage,
@@ -26,7 +29,13 @@ import {
   forgetServerBlocker,
   withdrawBondBlocker,
   portsHeldByOthers,
+  chainHelperCandidates,
+  noChainHostMessage,
+  isDockerUnavailable,
+  isOlderPrebuiltTag,
+  nodeBusyMessage,
 } from './validate';
+import { PREBUILT_IMAGE_TAG } from './prebuilt-image';
 import { addEvent } from './events';
 import { recordSample, purgeNode, history } from './metrics';
 import {
@@ -37,7 +46,7 @@ import {
   explorerTx,
   protocolInfo,
 } from './chain';
-import { fetchBalances, sendFrom, signerFromMnemonic, tokenAccount, appKeypair, transferInstructions } from './wallet';
+import { fetchBalances, sendFrom, signerFromMnemonic, tokenAccount, appKeypair, transferInstructions, refreshWalletBalance } from './wallet';
 import { keypairToJson } from './keys';
 import { sendTx, connection, withRetry, withRpcTimeout, pickRPC, RPC_QUERY_TIMEOUT_MS } from './solana-client';
 import { getSettings } from './settings';
@@ -75,6 +84,7 @@ import {
   type ProgramParams,
 } from './dvpnctl';
 import { log } from './logger';
+import { hnsdNotRunningMessage, hnsProbe, hnsSyncState, waitForHnsd } from './hnsd';
 import { removePath } from './local-privileged';
 import {
   IPC,
@@ -184,6 +194,7 @@ export async function nodeKeypair(nodeId: string): Promise<Keypair> {
  * host when it answers and holds the node image (it already has the key), else this
  * computer's Docker with home = userData/nodes/<id> (for a local node that IS its home).
  */
+const noCredsLogged = new Set<string>();
 async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
   let remoteWhy = '';
   if (node.target === 'remote') {
@@ -193,8 +204,13 @@ async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
     if (!creds) {
       // SSH credentials live in memory only, so every app restart lands here (FLX2, Q0409).
       remoteWhy = 'the app has no SSH connection to it (it is lost at every app restart)';
-      log.warn('no SSH credentials for the node host; chain commands run on this computer', { id: node.id, host: node.host });
+      // Once per node per app run: the poller lands here every minute until Reconnect (T4 log hygiene).
+      if (!noCredsLogged.has(node.id)) {
+        noCredsLogged.add(node.id);
+        log.warn('no SSH credentials for the node host; chain commands run on this computer until Reconnect', { id: node.id, host: node.host });
+      }
     } else {
+      noCredsLogged.delete(node.id);
       try {
         remote = await openRuntime(node, creds);
         remoteImage = (await remote.imageReady()) ? 'ready' : 'missing';
@@ -215,9 +231,116 @@ async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
     const imageTag = await localCtlImageTag(node.imageTag);
     return await openRuntime({ id: node.id, target: 'local', runtimeId: undefined, host: undefined, imageTag });
   } catch (err) {
-    if (!remoteWhy) throw err;
-    throw new Error(remoteFallbackError(node.host ?? 'its server', remoteWhy, (err as Error).message));
+    // Fix A (0.3.1): this computer cannot run it (Docker off, missing, or no image). Any other
+    // server the app holds SSH credentials for can sign instead: the node key is written into a
+    // per-node ctl home there for the one call and removed after (runChainCtl).
+    const helper = await openChainHelper(node);
+    if (helper) return helper;
+    if (remoteWhy) {
+      if (!getSSH(node.id)) log.info('chain command waits for Reconnect; this computer could not run it', { id: node.id, err: (err as Error).message });
+      throw new Error(remoteFallbackError(node.host ?? 'its server', remoteWhy, (err as Error).message, !getSSH(node.id)));
+    }
+    throw new Error(noChainHostMessage((err as Error).message));
   }
+}
+
+// ─── Chain-call server (fix A) ───
+
+/** SSH credentials of the server the user named for chain calls. Memory only, like all SSH creds. */
+let chainHostCreds: SSHCredentials | undefined;
+/** Runtimes opened on a helper server (not the node's own host): their ctl home is removed after use. */
+const helperRuntimes = new WeakSet<NodeRuntime>();
+
+export function setChainHost(creds: SSHCredentials | undefined): void {
+  chainHostCreds = creds;
+}
+
+/**
+ * Use `creds` as the chain-call server (null forgets it). The server is proven first (SSH,
+ * Docker, prebuilt image); then every parked removal is nudged so it finishes right away.
+ */
+export async function useChainHost(creds: SSHCredentials | null): Promise<{ ok: boolean; error?: string; label: string | null }> {
+  if (!creds) {
+    setChainHost(undefined);
+    log.info('chain-call server forgotten');
+    return { ok: true, label: null };
+  }
+  const t = await testChainHost(creds);
+  if (!t.ok) return { ok: false, error: t.error, label: chainHostLabel() };
+  setChainHost(creds);
+  log.info('chain-call server set', { server: chainHostLabel() });
+  for (const n of await listNodes()) {
+    if (n.removalStage) void advanceRemoval(n.id, { force: true }).catch((err: unknown) => log.warn('resume removal after chain-call server set failed', { id: n.id, err: (err as Error).message }));
+  }
+  return { ok: true, label: chainHostLabel() };
+}
+
+export function chainHostLabel(): string | null {
+  return chainHostCreds ? `${chainHostCreds.username}@${chainHostCreds.host}:${chainHostCreds.port}` : null;
+}
+
+/** Check a chain-call server answers, has Docker and holds (or can download) the prebuilt image. */
+export async function testChainHost(creds: SSHCredentials): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const rt = await openRuntime({ id: READ_CTL_HOME_ID, target: 'remote', host: creds.host, runtimeId: undefined, imageTag: PREBUILT_IMAGE_TAG }, creds);
+    try {
+      if (!(await rt.imageReady())) await rt.buildImage((l) => log.debug('chain host image', { line: l }));
+      return { ok: true };
+    } finally {
+      await rt.close();
+    }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * A ctl runtime for wallet-level chain calls (test channels): this computer's Docker, else a
+ * helper server (fix A). The caller removes its home and closes it, as before.
+ */
+export async function openWalletCtl(id: string, imageTag?: string): Promise<NodeRuntime> {
+  try {
+    return await openRuntime({ id, target: 'local', runtimeId: undefined, host: undefined, imageTag: await localCtlImageTag(imageTag) });
+  } catch (err) {
+    const helper = await openChainHelper({ id, target: 'local' } as DeployedNode);
+    if (helper) return helper;
+    throw new Error(noChainHostMessage((err as Error).message));
+  }
+}
+
+async function openChainHelper(node: DeployedNode): Promise<NodeRuntime | null> {
+  const byKey = new Map<string, SSHCredentials>();
+  const key = (c: { host: string; port: number; username: string }) => `${c.host}:${c.port}:${c.username}`;
+  if (chainHostCreds) byKey.set(key(chainHostCreds), chainHostCreds);
+  for (const [id, c] of sshKeyring) if (id !== node.id && !byKey.has(key(c))) byKey.set(key(c), c);
+  const order = chainHelperCandidates({
+    nodeHost: node.target === 'remote' ? node.host : undefined,
+    chainHost: chainHostCreds,
+    connected: [...sshKeyring.entries()].filter(([id]) => id !== node.id).map(([, c]) => c),
+  });
+  for (const cand of order) {
+    const creds = byKey.get(key(cand));
+    if (!creds) continue;
+    try {
+      // Prebuilt image only: a helper never builds from source (that uploads the whole tree).
+      const rt = await openRuntime({ id: node.id, target: 'remote', host: creds.host, runtimeId: undefined, imageTag: PREBUILT_IMAGE_TAG }, creds);
+      try {
+        if (!(await rt.imageReady())) await rt.buildImage((l) => log.debug('chain helper image', { line: l }));
+      } catch (err) {
+        await rt.close().catch((e: unknown) => log.warn('helper runtime close failed', { err: (e as Error).message }));
+        throw err;
+      }
+      // The same server can hide behind another name (a DNS name vs the node's IP). If this node's
+      // home already exists there it IS the node's home: sign there, but never remove it after.
+      const preexisting = (await rt.listHomes()).includes(node.id);
+      if (!preexisting) helperRuntimes.add(rt);
+      log.info('chain commands run on another server (this computer cannot)', { id: node.id, server: cand.host, source: cand.source, nodeHomeThere: preexisting });
+      return rt;
+    } catch (err) {
+      log.warn('chain helper server unusable', { id: node.id, server: cand.host, err: (err as Error).message });
+    }
+  }
+  return null;
 }
 
 /**
@@ -225,6 +348,9 @@ async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
  * A callback must never call withChainCtl for the same node (it would wait on itself).
  */
 const chainCtlQueue = keyedSerial();
+// T7: one config change (price, protocol, HNS, restart) per node at a time; the second is refused.
+const configChange = keyedExclusive();
+export const configChangeRunning = (id: string): string | undefined => configChange.current(id);
 
 /**
  * A runtime for a node's chain operations (openChainCtl). The dvpnctl home is
@@ -245,7 +371,18 @@ async function runChainCtl<T>(node: DeployedNode, fn: (rt: NodeRuntime) => Promi
   } finally {
     // The plaintext key copy exists only for the duration of the call. For a
     // local node the daemon has its own copy under node/keys/.
-    await rt.removeFile('ctl/keys/owner.json').catch((err: unknown) => log.warn('ctl key cleanup failed', { id: node.id, err: (err as Error).message }));
+    const helper = helperRuntimes.has(rt);
+    await rt.removeFile('ctl/keys/owner.json').then(async () => {
+      if (helper) await clearNodeError(node.id, 'Key cleanup on helper server');
+    }, async (err: unknown) => {
+      log.warn('ctl key cleanup failed', { id: node.id, err: (err as Error).message });
+      // A node key left on someone else's server must be visible, not only logged (fix F).
+      if (helper) await noteNodeError(node.id, 'Key cleanup on helper server', `${(err as Error).message}. Delete ctl/keys/owner.json under the node's folder on that server.`);
+    });
+    // On a helper server the whole per-node home was made for this call: leave nothing behind.
+    if (helper) {
+      await rt.removeHome().catch((err: unknown) => log.warn('helper ctl home cleanup failed', { id: node.id, err: (err as Error).message }));
+    }
     await rt.close();
   }
 }
@@ -484,8 +621,18 @@ export async function stopNode(id: string): Promise<void> {
 }
 
 export async function restartNode(id: string): Promise<void> {
+  return configChange.run(id, 'A restart', () => restartNodeNow(id));
+}
+
+async function restartNodeNow(id: string): Promise<void> {
   const node = await mustGet(id);
   if (node.removalStage) throw new Error('This node is being removed; it cannot be restarted.');
+  // NM-C9-4: Restart is how an HNS node on an older image gets the current one (config unchanged).
+  if (hnsImageOutdated(node)) {
+    await patchAndRestart(node, (t) => t, { recreate: true });
+    await addEvent({ kind: 'node-restarted', title: `Node ${node.moniker} restarted on node image ${PREBUILT_IMAGE_TAG.replace(/^.*prebuilt-/, '')}`, subtitle: 'HNS resolver fixes', relatedNodeId: id });
+    return;
+  }
   const runtimeId = await withHost(node, async (rt) => {
     if (await rt.isRunning()) {
       await rt.restartContainer();
@@ -505,19 +652,40 @@ export async function recentLogs(id: string): Promise<string[]> {
 
 // ─── Config-driven changes (prices, protocol): edit config, restart, chain follows ───
 
-async function patchAndRestart(node: DeployedNode, mutate: (toml: string) => string): Promise<void> {
+/**
+ * NM-C9-4: an HNS node on an older prebuilt image (the 0.3.x images differ only in the HNS layer:
+ * 0.3.7 fixes HNS names over Hysteria2, 0.3.6 the sync status and hnsd memory). Without this a
+ * protocol switch or restart kept e.g. prebuilt-0.3.5, and HNS names failed over Hysteria2.
+ */
+export function hnsImageOutdated(node: Pick<DeployedNode, 'handshakeDns' | 'imageTag'>): boolean {
+  return !!node.handshakeDns && isOlderPrebuiltTag(node.imageTag, PREBUILT_IMAGE_TAG);
+}
+
+async function patchAndRestart(node: DeployedNode, mutate: (toml: string) => string, opts: { recreate?: boolean } = {}): Promise<void> {
   if (node.removalStage) throw new Error('This node is being removed; its configuration can no longer change.');
-  const runtimeId = await withHost(node, async (rt) => {
+  // Any config change (protocol, prices) of an HNS node on an older image moves it to the current one.
+  if (hnsImageOutdated(node)) opts = { ...opts, recreate: true };
+  const { runtimeId, imageTag } = await withHost(node, async (rt) => {
+    let imageTag = node.imageTag;
+    // Recreate (HNS toggle): an older prebuilt image moves to the current one (same daemon
+    // binaries, plus the 0.3.1 DNS routing layer), and the container gets today's run options
+    // (log cap). `docker restart` would keep both as they were.
+    if (opts.recreate && isOlderPrebuiltTag(node.imageTag, PREBUILT_IMAGE_TAG)) {
+      rt.imageTag = PREBUILT_IMAGE_TAG;
+      if (!(await rt.imageReady())) await rt.buildImage((line) => log.debug('node image', { id: node.id, line }));
+      imageTag = PREBUILT_IMAGE_TAG;
+      log.info('node image updated for a config change', { id: node.id, from: node.imageTag, to: imageTag });
+    }
     const { nodeConfig } = homePathsFor(await cliLayoutOf(rt));
     await rt.writeFile(nodeConfig, mutate(await rt.readFile(nodeConfig)), 0o600);
-    if (await rt.isRunning()) {
+    if (!opts.recreate && (await rt.isRunning())) {
       await rt.restartContainer();
-      return node.runtimeId;
+      return { runtimeId: node.runtimeId, imageTag };
     }
-    return rt.startContainer(nodePorts(node));
+    return { runtimeId: await rt.startContainer(nodePorts(node)), imageTag };
   });
   startedAt.set(node.id, Date.now());
-  await updateNode(node.id, { runtimeId, startedAt: new Date().toISOString(), status: 'loading' });
+  await updateNode(node.id, { runtimeId, imageTag, startedAt: new Date().toISOString(), status: 'loading' });
 }
 
 /**
@@ -557,6 +725,20 @@ export async function updateNodePricing(
   opts: { leaseHourlyPriceDVPN?: number } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   try {
+    return await configChange.run(id, 'A price change', () => updateNodePricingNow(id, gigabytePriceDVPN, hourlyPriceDVPN, opts));
+  } catch (err) {
+    log.error('updateNodePricing failed', { id, err: (err as Error).message });
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+async function updateNodePricingNow(
+  id: string,
+  gigabytePriceDVPN: number,
+  hourlyPriceDVPN: number,
+  opts: { leaseHourlyPriceDVPN?: number },
+): Promise<{ ok: boolean; error?: string }> {
+  {
     const node = await mustGet(id);
     const prices = {
       perGb: Number(displayToBase(gigabytePriceDVPN)),
@@ -582,15 +764,21 @@ export async function updateNodePricing(
       relatedNodeId: id,
     });
     return { ok: true };
-  } catch (err) {
-    log.error('updateNodePricing failed', { id, err: (err as Error).message });
-    return { ok: false, error: (err as Error).message };
   }
 }
 
 /** Switch the one protocol this node serves. Ports were pinned for all six at deploy. */
 export async function setNodeProtocol(id: string, serviceType: VpnServiceType): Promise<{ ok: boolean; error?: string }> {
   try {
+    return await configChange.run(id, 'A protocol switch', () => setNodeProtocolNow(id, serviceType));
+  } catch (err) {
+    log.error('setNodeProtocol failed', { id, err: (err as Error).message });
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+async function setNodeProtocolNow(id: string, serviceType: VpnServiceType): Promise<{ ok: boolean; error?: string }> {
+  {
     const node = await mustGet(id);
     const bit = protocolInfo(serviceType).bit;
     await patchAndRestart(node, (t) => patchNodeConfig(t, { service: serviceType }));
@@ -598,9 +786,44 @@ export async function setNodeProtocol(id: string, serviceType: VpnServiceType): 
     await updateNode(id, { serviceType });
     await addEvent({ kind: 'node-protocol-changed', title: `${node.moniker} now serves ${serviceType}`, subtitle: `on-chain protocol bit ${bit}`, relatedNodeId: id });
     return { ok: true };
+  }
+}
+
+/**
+ * Turn the node's HNS resolver on or off: set `[handshake_dns] enabled`, restart the
+ * daemon (it starts or stops hnsd itself), then check the hnsd process followed.
+ */
+export async function setNodeHandshakeDns(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+  try {
+    if (typeof enabled !== 'boolean') throw new Error('enabled must be true or false');
+    return await configChange.run(id, 'An HNS resolver switch', () => setNodeHandshakeDnsNow(id, enabled));
   } catch (err) {
-    log.error('setNodeProtocol failed', { id, err: (err as Error).message });
+    log.error('setNodeHandshakeDns failed', { id, enabled, err: (err as Error).message });
     return { ok: false, error: (err as Error).message };
+  }
+}
+
+async function setNodeHandshakeDnsNow(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+  {
+    const node = await mustGet(id);
+    await patchAndRestart(node, (t) => patchNodeConfig(t, { handshakeDns: enabled }), { recreate: true });
+    await updateNode(id, { handshakeDns: enabled, hnsdError: undefined });
+    const followed = await withHost(node, (rt) => waitForHnsd(rt, enabled));
+    if (!followed) {
+      const why = enabled
+        ? hnsdNotRunningMessage(await withHost(node, (rt) => rt.logs(200)))
+        : 'The HNS resolver is off in the node config, but an hnsd process is still running in the node container.';
+      await updateNode(id, { hnsdError: why });
+      throw new Error(why);
+    }
+    log.info('HNS resolver switched', { id, enabled });
+    await addEvent({
+      kind: 'node-hns-changed',
+      title: `${node.moniker}: HNS resolver ${enabled ? 'on' : 'off'}`,
+      subtitle: enabled ? 'hnsd running in the node container' : 'hnsd stopped',
+      relatedNodeId: id,
+    });
+    return { ok: true };
   }
 }
 
@@ -720,6 +943,8 @@ export async function sweepNodeKey(nodeId: string): Promise<string | undefined> 
     relatedNodeId: nodeId,
     txHash: sig,
   });
+  // NM-C9 (c): the header kept the old balance until clicked after a background sweep.
+  await refreshWalletBalance();
   return sig;
 }
 
@@ -765,6 +990,9 @@ const HOST_CLEANUP_RETRY_MS = 10 * 60_000;
 export async function beginRemoval(id: string): Promise<void> {
   const node = await mustGet(id);
   if (isDeploying(id)) throw new Error('This node is still being deployed. Cancel the deploy instead; it reclaims the funds itself.');
+  // T7: removal stops the container; a config change recreating it at the same time would undo that.
+  const change = configChange.current(id);
+  if (change && !node.removalStage) throw new Error(nodeBusyMessage(change));
   // Not on chain yet (deploy failed or still running): nothing to redeem, but a
   // container may exist, the key may hold the funding, and an unconfirmed open_node
   // may still have bonded (delist reads the chain first).
@@ -813,11 +1041,23 @@ export async function advanceRemoval(id: string, opts: { force?: boolean } = {})
       const node = await getNode(id);
       if (!node?.removalStage) return;
       const stage = node.removalStage;
-      const next = stage === 'done' ? 'done' : await runRemovalStage(node, stage, force);
+      let next: RemovalStage;
+      try {
+        next = stage === 'done' ? 'done' : await runRemovalStage(node, stage, force);
+      } catch (err) {
+        // Persist the reason so the removal card shows it instead of "Working…".
+        const message = (err as Error).message;
+        if (node.removalError?.message !== message || node.removalError.stage !== stage) {
+          await updateNode(id, { removalError: { stage, message, at: Date.now() } }).catch((e: unknown) =>
+            log.warn('saving removal error failed', { id, err: (e as Error).message }),
+          );
+        }
+        throw err;
+      }
       // `force` is the user's one nudge: it must not make the loop ignore the backoff
       // again on a later pass, or a permanently unreachable host would spin.
       force = false;
-      if (next !== stage) await updateNode(id, { removalStage: next, status: statusWhileRemoving(next, node.status) });
+      if (next !== stage) await updateNode(id, { removalStage: next, status: statusWhileRemoving(next, node.status), removalError: undefined });
       if (next === 'done') {
         // The key backup is deleted below; never do that while value is still on the key.
         if (!(await keyIsEmpty(node.operatorAddress))) {
@@ -851,7 +1091,15 @@ async function runRemovalStage(node: DeployedNode, stage: RemovalStage, force = 
       await withHost(node, async (rt) => {
         await rt.removeContainer();
         if (await rt.isRunning()) throw new Error('the node container is still running after docker rm -f; retrying');
-      }).catch((err: unknown) => {
+      }).catch(async (err: unknown) => {
+        if (node.target === 'local' && isDockerUnavailable(err)) {
+          // Fix G: with this computer's Docker down the container cannot be running, so
+          // delisting is safe now. It is deleted when Docker is back (pruneStaleLocalContainers),
+          // before its restart policy can keep a daemon around.
+          await rememberStaleLocalContainer(node);
+          log.info('local Docker is down; removal continues, the node container is deleted once Docker is back', { id: node.id });
+          return;
+        }
         if (node.target === 'remote' && !getSSH(node.id)) throw new Error(`Reconnect over SSH to ${node.host} so the node container can be stopped before delisting.`);
         throw err;
       });
@@ -908,6 +1156,7 @@ async function runRemovalStage(node: DeployedNode, stage: RemovalStage, force = 
           ownerToken: tokenAccount(node.operatorAddress).toBase58(),
           vault: params.vault,
         });
+        log.info('bond withdrawn', { id: node.id, amountBase: String(ub.amount), sig });
         await addEvent({ kind: 'bond-withdrawn', title: `Bond returned for ${node.moniker}`, subtitle: `${baseToDisplay(ub.amount)} tDVPN`, relatedNodeId: node.id, txHash: sig, amountDVPN: baseToDisplay(ub.amount) });
       });
       return 'sweep';
@@ -981,6 +1230,83 @@ async function runRemovalStage(node: DeployedNode, stage: RemovalStage, force = 
   }
 }
 
+// ─── Background errors the user must see (fix F) ───
+
+/** Persist a background failure on the node so its page shows it (never only the log). */
+export async function noteNodeError(id: string, what: string, err: unknown): Promise<void> {
+  const message = (err instanceof Error ? err.message : String(err)).slice(0, 400);
+  const node = await getNode(id);
+  if (!node) return;
+  if (node.lastError?.what === what && node.lastError.message === message) return;
+  await updateNode(id, { lastError: { what, message, at: Date.now() } });
+}
+
+/** Clear the node's lastError once the same job succeeds again. */
+export async function clearNodeError(id: string, what: string): Promise<void> {
+  const node = await getNode(id);
+  if (node?.lastError?.what === what) await updateNode(id, { lastError: undefined });
+}
+
+const pollFailures = new Map<string, number>();
+
+// ─── Containers left behind while Docker was down (fix G) ───
+
+async function rememberStaleLocalContainer(node: DeployedNode): Promise<void> {
+  const s = await readStore();
+  const list = s.staleLocalContainers ?? [];
+  if (!list.some((c) => c.nodeId === node.id)) list.push({ nodeId: node.id, runtimeId: node.runtimeId, at: new Date().toISOString() });
+  s.staleLocalContainers = list;
+  await writeStore(s);
+}
+
+let lastStalePruneFailure = 0;
+
+/** Delete containers of removed local nodes once Docker is reachable again. Quiet while it is down. */
+export async function pruneStaleLocalContainers(): Promise<number> {
+  const s = await readStore();
+  const list = s.staleLocalContainers ?? [];
+  if (!list.length) return 0;
+  const left: typeof list = [];
+  let removed = 0;
+  for (const c of list) {
+    try {
+      // By name first (what node-runtime creates), then by the recorded id.
+      await withDockerTimeout(() => removeLocalContainer(containerName(c.nodeId)), 60_000, 'removeContainer');
+      if (c.runtimeId) await withDockerTimeout(() => removeLocalContainer(c.runtimeId!), 60_000, 'removeContainer');
+      removed++;
+      log.info('left-behind node container deleted', { id: c.nodeId });
+    } catch (err) {
+      left.push(c);
+      if (!isDockerUnavailable(err) && Date.now() - lastStalePruneFailure > 3_600_000) {
+        lastStalePruneFailure = Date.now();
+        log.warn('could not delete a left-behind node container; retrying', { id: c.nodeId, err: (err as Error).message });
+      }
+    }
+  }
+  if (removed) {
+    const fresh = await readStore();
+    fresh.staleLocalContainers = (fresh.staleLocalContainers ?? []).filter((c) => left.some((l) => l.nodeId === c.nodeId));
+    await writeStore(fresh);
+  }
+  return removed;
+}
+
+/** "Retry now" on the removal card (T1): run the current removal step immediately, skipping backoff. */
+export async function retryRemovalNow(id: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const node = await mustGet(id);
+    if (!node.removalStage) throw new Error('This node is not being removed.');
+    if (removalsInFlight.has(id)) throw new Error('The removal is running right now. Try again in a minute.');
+    await advanceRemoval(id, { force: true });
+    const after = await getNode(id);
+    if (after?.removalError) return { ok: false, error: after.removalError.message };
+    if (after?.pendingHostCleanup) return { ok: false, error: after.pendingHostCleanup.reason };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
 /** Manual "withdraw bond now" (same as letting the poller do it once due). */
 export async function withdrawBondNow(id: string): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -1041,6 +1367,9 @@ export async function liveStatus(id: string): Promise<NodeLiveStatus> {
     logTail: [],
     activeSubscriptions: [],
     linkedPlans: [],
+    configChange: configChange.current(id),
+    sshDisconnected: node.target === 'remote' && !hasSSH(id) ? true : undefined,
+    hnsImageOutdated: hnsImageOutdated(node) || undefined,
   };
   try {
     const conn = await connection();
@@ -1071,7 +1400,12 @@ export async function liveStatus(id: string): Promise<NodeLiveStatus> {
     }
     await refreshNodeBalances(node);
   } catch (err) {
-    status.error = (err as Error).message;
+    // NM-C9 T9 (h): a server node right after an app restart has no SSH session, so its chain read
+    // falls back to this computer's Docker; on an SSH-only Win/mac machine that fails with a Docker
+    // install hint that is wrong for a server node. Say what the user can do instead.
+    status.error = status.sshDisconnected && status.chainStatus === undefined
+      ? `Reconnect ${node.moniker} (Nodes → node → Reconnect) to read its chain status from its server.`
+      : (err as Error).message;
   }
   if (!node.removalStage || node.removalStage === 'redeem') {
     try {
@@ -1093,6 +1427,17 @@ export async function liveStatus(id: string): Promise<NodeLiveStatus> {
           status.linkedPlans = positions
             .map((p) => summarizeLease(p as Record<string, unknown>))
             .filter((l): l is NodePlanLink => !!l);
+          if (node.handshakeDns) {
+            const probe = await hnsProbe(rt).catch((err: unknown) => {
+              log.debug('hnsd probe failed', { id, err: (err as Error).message });
+              return undefined;
+            });
+            status.hnsdRunning = probe?.hnsd;
+            status.hnsRouting = probe?.routing;
+            if (probe) status.hnsSync = { ...hnsSyncState(probe.sync), height: probe.sync?.height, ageSec: probe.sync?.ageSec };
+            // hnsd came up after all (slow first start): drop the stale "not running" reason.
+            if (status.hnsdRunning && node.hnsdError) await updateNode(id, { hnsdError: undefined });
+          }
         } else {
           status.reachable = false;
         }
@@ -1200,11 +1545,15 @@ export function startPoller(): void {
     }
   };
   const tickOnce = async () => {
+    await pruneStaleLocalContainers().catch((err: unknown) => log.warn('stale container prune failed', { err: (err as Error).message }));
     for (const node of await listNodes()) {
       try {
         if (isDeploying(node.id)) continue;
         if (node.removalStage) {
           await advanceRemoval(node.id);
+          // NM-C9 (a): this branch skipped the clear below, so a removal step that failed while the
+          // app had no SSH kept its red "Status check failed" banner an hour after it succeeded.
+          if (pollFailures.delete(node.id)) await clearNodeError(node.id, 'Status check');
           continue;
         }
         if (!node.registeredOnChain) continue;
@@ -1223,15 +1572,24 @@ export function startPoller(): void {
         if (status.reachable && node.status !== 'online' && node.status !== 'offline') {
           await transition(node.id, 'online');
           await addEvent({ kind: 'node-online', title: `Node ${node.moniker} is online`, subtitle: 'Listed on Solana devnet', relatedNodeId: node.id });
-        } else if (!status.reachable && node.status === 'online') {
+        } else if (!status.reachable && node.status === 'online' && !(status.sshDisconnected && status.chainStatus === undefined)) {
+          // A server node with no SSH session whose chain read failed: unknown, not 'not live' (T9 h).
           const sinceStart = Date.now() - (startedAt.get(node.id) ?? 0);
           if (sinceStart > 120_000) {
             await transition(node.id, 'error');
             await addEvent({ kind: 'node-unreachable', title: `Node ${node.moniker} is not live`, subtitle: status.error ?? `chain status ${status.chainStatus}`, relatedNodeId: node.id });
           }
         }
+        if (pollFailures.delete(node.id)) await clearNodeError(node.id, 'Status check');
       } catch (err) {
-        log.debug('poll node failed', { id: node.id, err: (err as Error).message });
+        // One miss is noise; three in a row is something the user must see (fix F).
+        const n = (pollFailures.get(node.id) ?? 0) + 1;
+        pollFailures.set(node.id, n);
+        log.debug('poll node failed', { id: node.id, n, err: (err as Error).message });
+        if (n === 3) {
+          log.warn('status check keeps failing', { id: node.id, err: (err as Error).message });
+          await noteNodeError(node.id, 'Status check', err).catch((e: unknown) => log.warn('saving node error failed', { id: node.id, err: (e as Error).message }));
+        }
       }
     }
   };

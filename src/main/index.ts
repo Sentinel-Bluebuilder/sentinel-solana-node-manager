@@ -1,3 +1,4 @@
+import { autoSweepTestChannels } from './services/test-channels';
 import { app, BrowserWindow, crashReporter, nativeImage, session, shell } from 'electron';
 import path from 'node:path';
 import { registerIpcHandlers } from './ipc';
@@ -271,6 +272,9 @@ app.whenReady().then(async () => {
   } catch (err) {
     log.warn('startPoller failed', { err: String(err) });
   }
+  // Fix B: test escrow comes home without anyone remembering to sweep (no-op when nothing is due).
+  // autoSweepTestChannels logs its own failure (deduplicated) and keeps it for the Wallet card.
+  setInterval(() => void autoSweepTestChannels().catch((err: unknown) => log.debug('auto escrow sweep failed', { err: (err as Error).message })), 5 * 60_000).unref();
 
   // Best-effort retry for any node whose `specs:v1` publish didn't make
   // it through last session (RPC pool down, app killed mid-broadcast).

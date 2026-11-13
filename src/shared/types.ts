@@ -99,6 +99,22 @@ export interface DeployedNode {
   unbondsAt?: string;
   /** Unbonding PDA `["node_unbonding", owner, node_id]`. */
   unbondingPda?: string;
+  /**
+   * Why the last removal step failed (e.g. Docker Desktop not running), shown on the
+   * removal card. Cleared when a step advances. Without it the card said "Working
+   * through the removal steps" while every retry failed.
+   */
+  removalError?: { stage: RemovalStage; message: string; at: number };
+  /** HNS resolver: `[handshake_dns] enabled` in the node config (the daemon runs hnsd). */
+  handshakeDns?: boolean;
+  /** Why hnsd is not running although `handshakeDns` is on (cleared once it runs). */
+  hnsdError?: string;
+  /**
+   * Last background failure the user must see (fix F): repeated status-check failures, a node
+   * key left on a helper server. Cleared when the same job next succeeds. Removal errors
+   * use removalError, HNS uses hnsdError.
+   */
+  lastError?: { what: string; message: string; at: number };
   /** Hardware snapshot captured at deploy time. Populated for new launches. */
   specs?: NodeSpecsSnapshot;
   /** Signature of the memo transaction that published `specs`. */
@@ -161,6 +177,11 @@ export interface SetProtocolRequest {
   serviceType: VpnServiceType;
 }
 
+export interface SetHandshakeDnsRequest {
+  nodeId: string;
+  enabled: boolean;
+}
+
 export interface WalletState {
   address: string | null;
   /** tDVPN (display units). */
@@ -183,6 +204,10 @@ export interface NodeTestResult {
   sessionId?: string;
   /** Bytes fetched through the tunnel by curl. */
   downloadedBytes?: number;
+  /** HNS on + tunnel protocol: an HNS name resolved through the node (1.1.1.1 asked, node redirects). */
+  hnsDns?: boolean;
+  /** Same probe: an ICANN name still resolved. */
+  icannDns?: boolean;
   /** Bytes the client daemon metered (rx+tx). */
   clientBytes?: number;
   /** Node revenue (base units) before / after the test redemption. */
@@ -207,6 +232,8 @@ export interface NodeTestResult {
    */
   blockedUpstream?: string;
 }
+
+export type HnsSyncState = 'unknown' | 'starting' | 'syncing' | 'synced' | 'stalled';
 
 export interface NodeLiveStatus {
   nodeId: string;
@@ -245,6 +272,33 @@ export interface NodeLiveStatus {
   activeSubscriptions: NodeSession[];
   /** Leases (provider pre-paid positions) on this node. */
   linkedPlans: NodePlanLink[];
+  /** hnsd process seen in the node container (only probed when the HNS resolver is on). */
+  hnsdRunning?: boolean;
+  /**
+   * Users' DNS goes through the node's split resolver (dnsmasq + the nm_hns redirect, node image
+   * 0.3.1+). False with hnsd running = an older image: HNS names work on the node only.
+   */
+  hnsRouting?: boolean;
+  /**
+   * hnsd's chain sync from the supervisor's status file (image 0.3.5+). 'unknown' = older image;
+   * 'stalled' = no new Handshake header for 45 min (or none ever): HNS names fail for users.
+   */
+  hnsSync?: { state: HnsSyncState; percent?: number; height?: number; ageSec?: number };
+  /**
+   * A config change running on this node right now ('A protocol switch', 'A restart', …). The
+   * container is being recreated, so 'not reachable' is expected and not an expired listing.
+   */
+  configChange?: string;
+  /**
+   * HNS is on and the node runs an older prebuilt image than the app pins (NM-C9-4): HNS fixes in
+   * the newer image (e.g. HNS names over Hysteria2, 0.3.7) only arrive with a Restart.
+   */
+  hnsImageOutdated?: boolean;
+  /**
+   * A server node the app holds no SSH access to (after an app restart; credentials are never
+   * stored). Its health can't be read from here, which is not the same as an expired listing.
+   */
+  sshDisconnected?: boolean;
   /** Null when everything is fine. */
   error?: string;
 }
@@ -467,6 +521,8 @@ export interface DeployRequest {
   country?: string;
   /** Required when target === 'remote'. */
   ssh?: SSHCredentials;
+  /** Run the HNS resolver (hnsd) with the node. Default off. */
+  handshakeDns?: boolean;
 }
 
 export type EventKind =
@@ -490,13 +546,15 @@ export type EventKind =
   | 'balance-refreshed'
   | 'node-repriced'
   | 'node-protocol-changed'
+  | 'node-hns-changed'
   | 'node-redeemed'
   | 'node-delisted'
   | 'node-closed'
   | 'bond-withdrawn'
   | 'funds-swept'
   | 'node-test-passed'
-  | 'node-test-failed';
+  | 'node-test-failed'
+  | 'store-recovered';
 
 export interface AppEvent {
   id: string;
@@ -726,12 +784,18 @@ export const IPC = {
   NODES_PUBLISH_SPECS: 'nodes:publish-specs',
   NODES_REAP_STUCK: 'nodes:reap-stuck',
   NODES_SET_PROTOCOL: 'nodes:set-protocol',
+  NODES_SET_HANDSHAKE_DNS: 'nodes:set-handshake-dns',
+  CHAIN_HOST_SET: 'chain-host:set',
+  CHAIN_HOST_GET: 'chain-host:get',
   NODES_REDEEM: 'nodes:redeem',
   NODES_RELIST: 'nodes:relist',
   NODES_WITHDRAW_BOND: 'nodes:withdraw-bond',
+  NODES_RETRY_REMOVAL: 'nodes:retry-removal',
   NODES_FORGET_SERVER: 'nodes:forget-server',
   NODES_TEST: 'nodes:test',
   NODES_SWEEP_TEST_CHANNELS: 'nodes:sweep-test-channels',
+  TEST_ESCROW_STATUS: 'test-escrow:status',
+  TEST_ESCROW_RECLAIM: 'test-escrow:reclaim',
   NODES_SESSIONS: 'nodes:sessions',
   NODES_CLOSE_SESSION: 'nodes:close-session',
   NODES_POSITIONS: 'nodes:positions',

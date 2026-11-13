@@ -2,6 +2,49 @@
 
 The earlier Cosmos-era app is a separate project and is not part of this repository.
 
+## 0.3.1-rc.1 — HNS for users, no Docker needed to withdraw (release candidate, 2026-11-13)
+
+- **HNS Resolver works for the node's users:** with the switch on, a client connected over WireGuard,
+  AmneziaWG or OpenVPN can open Handshake names (whatever DNS server it asked, port 53 goes to the
+  node's resolver); ordinary names still go to 1.1.1.1. V2Ray, Xray and Hysteria2 nodes resolve
+  destinations on the node, through the same resolver, and DNS a Hysteria2/V2Ray/Xray client sends to
+  any server is answered by it too. Node page: "Routing users' DNS". Needs the new
+  node image 0.3.7 (amd64 + arm64, SHA-256 pinned); turning HNS on moves a node to it. In that image
+  an hnsd crash restarts hnsd only (upstream stops the whole node daemon when hnsd exits), and
+  hnsd's per-block output (~500k lines while syncing) is summarised once a minute instead of
+  filling the node log; hnsd keeps its chain checkpoint, so a restart no longer re-syncs
+  the whole Handshake chain (~3 min) and leaves no temp files behind; its log can never stall it.
+  After a node's first sync hnsd is restarted once from its checkpoint, which frees ~150 MB of
+  memory for good (163 MB → 9.5 MB; measured cost of HNS on a 2 GB VPS: ~85 s and 210 MB download for
+  the first sync, then ~0% CPU and ~1 MB/h).
+  The node page shows the Handshake sync ("Syncing · 45%", and an error asking for outbound TCP
+  when hnsd reaches no Handshake peer or gets no new block for 45 min; "Restarting…" during a
+  restart) instead of "Routing users' DNS" as soon as a process named hnsd exists. The paid
+  self-test checks HNS names on every protocol (V2Ray/Xray through their proxy).
+  An HNS node on an older node image moves to the current one at its next Restart, protocol switch
+  or price change (the page says "Restart to update the node image"), so it gets these fixes.
+- **Chain actions without Docker on this computer:** withdraw, bond withdrawal, removal and test-escrow
+  refunds run on one of your servers when Docker Desktop is off (Settings → Chain-call server). The
+  removal card says why it is waiting and offers Start Docker Desktop / Use a server instead.
+- **Removal never dead-ends:** Retry now, the cleanup reason, "Retry cleanup now" and "Server is gone";
+  a local node whose Docker is gone is forgotten and its container deleted when Docker returns.
+- **Test escrow comes home by itself:** the paid self-test starts the channel close right away and the
+  app finishes it after the grace period (Wallet → Test escrow card, Reclaim now).
+- Wallet: SOL Max leaves the fee and rent; errors on a node stay on its page (red card) instead of
+  only in the log.
+- Fixes: a damaged app data file is restored from a rolling backup instead of starting empty (that
+  lost every node and its key); "getting the chain-call image" no longer repeats every minute with
+  Docker off; the escrow sweep no longer writes the same log line every 10 minutes; node logs are
+  capped at 3 × 20 MB (hnsd logs ~680k lines while syncing).
+- Two changes on one node at once (e.g. a protocol switch and the HNS switch) are refused with
+  "… is still running on this node" instead of racing; while a change restarts the node its page says
+  "Switching protocol…" instead of "Listing expired", and a server node the app has no SSH access
+  to after a restart reads "Not connected" (not "Error") until Reconnect, without a "not live" alert
+  or a Docker install hint at every launch.
+- After a deploy, the button reads "Save phrase to open node" until the recovery phrase is saved; the
+  tour explains the 0.06 SOL per node (0.05 to the node key + fees). Live sessions no longer lists
+  sessions the node has already closed (the paid self-test stayed there for an hour).
+
 ## 0.3.0 — installers and one-download node image (2026-11-10)
 
 - **Installers:** Windows one-click setup (x64, arm64; per user, no admin prompt, opens when done) and a

@@ -28,6 +28,7 @@ import { failedDeployVerdict, isPublicIPv4 } from './validate';
 import { captureLocalSpecs, publishNodeSpecs } from './node-specs';
 import { resolveCountry, resolveOwnCountry, resolveOwnPublicIp } from './geoip';
 import { log } from './logger';
+import { hnsdNotRunningMessage, waitForHnsd } from './hnsd';
 import { IPC, type DeployPhase, type DeployProgress, type DeployRequest, type DeployedNode, type SSHCredentials } from '../../shared/types';
 
 /**
@@ -207,6 +208,7 @@ export async function startDeploy(req: DeployRequest, onProgress: ProgressFn): P
     serviceType: req.serviceType,
     registeredOnChain: false,
     remoteUrl: stripToHost(host),
+    handshakeDns: req.handshakeDns === true,
   };
   await ensureNodePersisted(node);
   markDeploying(nodeId, true);
@@ -323,9 +325,16 @@ async function recoverFailedDeploy(nodeId: string, stage: 'pre-fund' | 'funded' 
     await beginRemoval(nodeId); // resumable: delist → close → unbond → withdraw → sweep
     return;
   }
-  await removeContainerAndHome(node, creds).catch((err: unknown) =>
-    log.warn('failed-deploy container cleanup failed', { nodeId, err: (err as Error).message }),
-  );
+  await removeContainerAndHome(node, creds).catch(async (err: unknown) => {
+    log.warn('failed-deploy container cleanup failed', { nodeId, err: (err as Error).message });
+    // The record may be dropped below; the event is the user's only trace of a leftover (fix F).
+    await addEvent({
+      kind: 'deploy-failed',
+      title: `Cleanup after the failed deploy of ${node.moniker} did not finish`,
+      subtitle: `${node.target === 'remote' ? `On ${node.host}: ` : ''}${(err as Error).message}`.slice(0, 180),
+      relatedNodeId: nodeId,
+    });
+  });
   if (stage === 'funded') {
     await mgr.sweepNodeKey(nodeId);
     const bal = await fetchBalances(node.operatorAddress);
@@ -495,7 +504,12 @@ async function runDeploy(
     // In cb33 both patches land in the one config.toml; patch it in sequence.
     await rt.writeFile(
       paths.nodeConfig,
-      patchNodeConfig(await rt.readFile(paths.nodeConfig), { redeemThreshold: 1, apiPort: ports.api, apiAddrs: [host] }),
+      patchNodeConfig(await rt.readFile(paths.nodeConfig), {
+        redeemThreshold: 1,
+        apiPort: ports.api,
+        apiAddrs: [host],
+        handshakeDns: req.handshakeDns === true,
+      }),
       0o600,
     );
     await rt.writeFile(paths.topConfig, patchTopConfig(await rt.readFile(paths.topConfig), rpcUrl), 0o600);
@@ -556,6 +570,22 @@ async function runDeploy(
     if (!listed) {
       const tail = (await rt.logs(40)).join('\n');
       throw new Error(`The node started but did not list itself within ${VERIFY_TIMEOUT_MS / 1000}s. Last logs:\n${tail.slice(-1500)}`);
+    }
+
+    // ── 9. HNS resolver: the daemon starts hnsd itself; prove it is running ──
+    // Not fatal: the node is open, bonded and listed, and failing the deploy now would
+    // send it through removal. The record keeps the reason and the node page shows it.
+    if (req.handshakeDns) {
+      push('verifying', 98, 'Checking the HNS resolver', `[${ts()}] waiting for hnsd in the node container`);
+      if (await waitForHnsd(rt, true)) {
+        await updateNode(node.id, { hnsdError: undefined });
+        push('verifying', 99, 'HNS resolver running', `[${ts()}] hnsd is running (127.0.0.1:5350 in the node container)`);
+      } else {
+        const why = hnsdNotRunningMessage(await rt.logs(200));
+        await updateNode(node.id, { hnsdError: why });
+        log.warn('deploy: hnsd not running', { id: node.id });
+        push('verifying', 99, 'HNS resolver did not start', `[${ts()}] ${why}`);
+      }
     }
     await updateNode(node.id, { status: 'online' });
     return 'opened';

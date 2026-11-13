@@ -5,14 +5,14 @@
 // tree, no Go build, no buildx. Pure helpers only (no Electron, no Docker) so unit tests cover them.
 
 /** Local tag every prebuilt image file loads as (same tag on every CPU). */
-export const PREBUILT_IMAGE_TAG = 'node-manager/dvpnd:prebuilt-0.3.0';
+export const PREBUILT_IMAGE_TAG = 'node-manager/dvpnd:prebuilt-0.3.7';
 
 /** Release that carries the image files. */
 export const PREBUILT_IMAGE_RELEASE_URL =
-  'https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/download/node-image-0.3.0';
+  'https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/download/node-image-0.3.7';
 
 /** Daemon source the image was built from (shown in the deploy log). */
-export const PREBUILT_IMAGE_SOURCE = 'sentinel-dvpnd final6.5 (90014b2)';
+export const PREBUILT_IMAGE_SOURCE = 'sentinel-dvpnd final6.5 (90014b2) + HNS routing layer + hnsd supervisor (quiet log, kept checkpoint, sync status to the tip, memory trim after the first sync, relayed DNS redirect) 0.3.7';
 
 export type ImageArch = 'amd64' | 'arm64';
 
@@ -28,14 +28,14 @@ export interface PrebuiltAsset {
 
 const ASSETS: Record<ImageArch, { file: string; sha256: string; bytes: number }> = {
   amd64: {
-    file: 'sentinel-dvpnd-image-0.3.0-linux-amd64.tar.gz',
-    sha256: 'bb90712682bf43add0c86af4ed1ee153372b4b53ca3e0da1eca2901dd7737422',
-    bytes: 96_233_966,
+    file: 'sentinel-dvpnd-image-0.3.7-linux-amd64.tar.gz',
+    sha256: 'bced203a69a02ab4abc86d377796b2f65c766d23bb48c5eb7b0403800354e075',
+    bytes: 97_753_464,
   },
   arm64: {
-    file: 'sentinel-dvpnd-image-0.3.0-linux-arm64.tar.gz',
-    sha256: 'a8be220f059db17e7672b3947fab2d9b736ad84feed561f3ef193cf8641f25c9',
-    bytes: 89_141_331,
+    file: 'sentinel-dvpnd-image-0.3.7-linux-arm64.tar.gz',
+    sha256: 'faf7532b248631c5228151c81ea3dee2a3d8c11e1136c6703b374415df6217be',
+    bytes: 90_612_460,
   },
 };
 

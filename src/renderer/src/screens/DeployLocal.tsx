@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
+import { HnsDeploySwitch } from '../components/HnsResolverControl';
 import { MIcon } from '../components/MIcon';
 import { useApp } from '../store/app';
 import { fmtDVPN } from '../lib/format';
@@ -24,6 +25,7 @@ export function DeployLocal() {
   const [leasePrice, setLeasePrice] = useState('0.001');
   const [publicHost, setPublicHost] = useState('');
   const [country, setCountry] = useState('');
+  const [handshakeDns, setHandshakeDns] = useState(false);
   const publicHostValid = publicHost.trim() === '' || /^[A-Za-z0-9.\-]{1,253}$/.test(publicHost.trim());
   const countryValid = country.trim() === '' || /^[A-Za-z]{2}$/.test(country.trim());
 
@@ -112,6 +114,7 @@ export function DeployLocal() {
         port,
         remoteUrl: publicHost.trim() || undefined,
         country: country.trim() ? country.trim().toUpperCase() : undefined,
+        handshakeDns,
       });
       navigate({ name: 'progress', jobId, moniker: moniker.trim(), origin: 'local' });
     } catch (e) {
@@ -170,7 +173,7 @@ export function DeployLocal() {
                 </div>
               </div>
             </div>
-            <span className="chip chip-accent">Local</span>
+            <HnsDeploySwitch checked={handshakeDns} onChange={setHandshakeDns} />
           </div>
 
           <div className="card-body flex flex-col gap-2">

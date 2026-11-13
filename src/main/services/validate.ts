@@ -135,7 +135,11 @@ export function chainWaitTimeoutMessage(what: string, timeoutMs: number, lastRea
  * the fix the user can act on (reconnect to the server) instead of only the local error,
  * e.g. "buildx missing on this computer" after an app restart dropped the SSH link (Q0409).
  */
-export function remoteFallbackError(host: string, why: string, localError: string): string {
+export function remoteFallbackError(host: string, why: string, localError: string, noSession = false): string {
+  // NM-C9-3: right after an app restart the only missing piece is the SSH session. The local
+  // error ("Docker Desktop is not installed…") then sent SSH-only users to install Docker and put
+  // Start Docker buttons on the removal card. Reconnect is the whole fix.
+  if (noSession) return `Reconnect to ${host} (Nodes → node → Reconnect) to continue: the app has no SSH connection to this node's server after a restart, and its chain commands run there.`;
   return (
     `This node's chain commands run on its server ${host}, but ${why}. Reconnect to it ` +
     `(Nodes → node → Reconnect), then try again. Running them on this computer instead failed: ${localError.trim().slice(0, 300)}`
@@ -149,6 +153,39 @@ export function remoteFallbackError(host: string, why: string, localError: strin
  * …/ctl/keys/owner.json: no such file", FLX2 uifire nodes.withdraw, Q0410).
  */
 export function keyedSerial(): <T>(key: string, job: () => Promise<T>) => Promise<T> {
+  return keyedSerialImpl();
+}
+
+/**
+ * T7 (0.3.1): one config change per node at a time. Price, protocol, HNS and restart each
+ * read-modify-write the node config and restart or recreate the container; two at once (UI +
+ * CLI, or a double click) lost one change or started two containers. The second is refused.
+ */
+export function keyedExclusive(): {
+  run: <T>(key: string, what: string, job: () => Promise<T>) => Promise<T>;
+  current: (key: string) => string | undefined;
+} {
+  const held = new Map<string, string>();
+  return {
+    current: (key) => held.get(key),
+    run: async (key, what, job) => {
+      const cur = held.get(key);
+      if (cur) throw new Error(nodeBusyMessage(cur));
+      held.set(key, what);
+      try {
+        return await job();
+      } finally {
+        held.delete(key);
+      }
+    },
+  };
+}
+
+export function nodeBusyMessage(what: string): string {
+  return `${what} is still running on this node (it can take up to 6 minutes). Try again when it finishes.`;
+}
+
+function keyedSerialImpl(): <T>(key: string, job: () => Promise<T>) => Promise<T> {
   const tails = new Map<string, Promise<unknown>>();
   return <T>(key: string, job: () => Promise<T>): Promise<T> => {
     const prev = tails.get(key) ?? Promise.resolve();
@@ -183,6 +220,57 @@ export function chainCtlPlace(o: {
 }): 'node-host' | 'this-computer' {
   if (o.target !== 'remote' || !o.hasCreds) return 'this-computer';
   return o.remoteImage === 'ready' ? 'node-host' : 'this-computer';
+}
+
+/** A server the app holds SSH credentials for, as seen by the chain-call fallback. */
+export interface ChainHostCandidate {
+  /** Where the credentials came from: the user's chain-call server, or another node's Reconnect. */
+  source: 'chain-host' | 'node';
+  host: string;
+  port: number;
+  username: string;
+}
+
+/**
+ * Servers that can run a node's chain commands when this computer's Docker cannot (fix A,
+ * 0.3.1). Order: the server the user named for chain calls, then the servers of other nodes
+ * the app is connected to. The node's own server is excluded (openChainCtl already tried it),
+ * and each host:port:user appears once.
+ * Regression: a removal parked at withdraw-bond for a day because Docker Desktop was off,
+ * although the app was connected to a server that could have signed (2026-11-12).
+ */
+export function chainHelperCandidates(o: {
+  nodeHost?: string;
+  chainHost?: Omit<ChainHostCandidate, 'source'>;
+  connected: Array<Omit<ChainHostCandidate, 'source'>>;
+}): ChainHostCandidate[] {
+  const seen = new Set<string>();
+  const out: ChainHostCandidate[] = [];
+  const add = (c: Omit<ChainHostCandidate, 'source'>, source: ChainHostCandidate['source']) => {
+    if (o.nodeHost && c.host === o.nodeHost) return;
+    const k = `${c.host}:${c.port}:${c.username}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ ...c, source });
+  };
+  if (o.chainHost) add(o.chainHost, 'chain-host');
+  for (const c of o.connected) add(c, 'node');
+  return out;
+}
+
+/** True for the structured "Docker is not there / not running" error from docker.getClient(). */
+export function isDockerUnavailable(err: unknown): boolean {
+  const reason = (err as { reason?: string } | null)?.reason;
+  return reason === 'desktop-not-running' || reason === 'desktop-not-installed' || reason === 'engine-not-running';
+}
+
+/** Message when neither this computer's Docker nor any connected server can run chain commands. */
+export function noChainHostMessage(localError: string): string {
+  return (
+    `Chain commands for this node need Docker on this computer or a server the app is connected to. ` +
+    `Start Docker Desktop, or connect a server under Settings → Chain-call server (any Linux server with SSH). ` +
+    `This computer said: ${localError.trim().slice(0, 240)}`
+  );
 }
 
 export function isReservedRuntimeHome(nodeId: string): boolean {
@@ -526,4 +614,29 @@ export function portsHeldByOthers<T extends FirewallHolder>(
     for (const p of portsOf(other)) held.add(p);
   }
   return held;
+}
+
+/**
+ * Test escrow (fix B): would a sweep send something now? An open test channel (start its
+ * close), a close whose grace has passed (finish it), or a refund still owed to the wallet.
+ */
+export function sweepIsDue(st: { open: number; refundPending: boolean }, maturities: string[], now: number): boolean {
+  return st.open > 0 || st.refundPending || maturities.some((m) => Date.parse(m) <= now);
+}
+
+/**
+ * Log hygiene (T4: no app.log line more than 6×/hour). A background job that fails the same way
+ * on every tick logs it when the message changes, or again once `gapMs` has passed.
+ */
+export function shouldLogRepeat(prev: { message: string; at: number } | undefined, message: string, now: number, gapMs = 60 * 60_000): boolean {
+  return !prev || prev.message !== message || now - prev.at >= gapMs;
+}
+
+/**
+ * A node on an older prebuilt image (e.g. prebuilt-0.3.0 when the app pins prebuilt-0.3.1)?
+ * Source-built tags (devnet-<sha>) are never swapped: the user chose to build from source.
+ */
+export function isOlderPrebuiltTag(tag: string | undefined, current: string): boolean {
+  const prefix = 'node-manager/dvpnd:prebuilt-';
+  return !!tag && tag !== current && tag.startsWith(prefix) && current.startsWith(prefix);
 }

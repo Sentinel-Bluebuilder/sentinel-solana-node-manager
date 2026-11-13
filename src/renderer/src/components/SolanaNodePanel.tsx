@@ -23,7 +23,7 @@ const STAGE_LABEL: Record<string, string> = {
  * redeem / re-list / inspect, live sessions, and the removal stage machine.
  */
 export function SolanaNodePanel({ node, status }: { node: DeployedNode; status: NodeLiveStatus | null }) {
-  const { pushToast, refreshNodes, refreshStatus, confirm } = useApp();
+  const { pushToast, refreshNodes, refreshStatus, confirm, navigate } = useApp();
   const [busy, setBusy] = useState<'' | 'test' | 'protocol' | 'redeem' | 'relist' | 'inspect' | 'bond' | 'session' | 'specs'>('');
   const [protocol, setProtocol] = useState<VpnServiceType>(node.serviceType);
   const [test, setTest] = useState<NodeTestResult | null>(null);
@@ -41,6 +41,31 @@ export function SolanaNodePanel({ node, status }: { node: DeployedNode; status: 
     if (node.target !== 'remote') return;
     void window.api.nodes.sshConnected(node.id).then(setSshOk).catch(() => setSshOk(false));
   }, [node.id, node.target, busy]);
+  const forgetServer = async () => {
+    const ok = await confirm({
+      title: 'Finish without the server?',
+      body: `Use this only if ${node.host ?? 'the server'} no longer exists. The app forgets this node; the firewall rules and node folder it made on that server are not cleaned up.`,
+      tone: 'danger',
+      confirmLabel: 'Server is gone',
+    });
+    if (!ok) return;
+    const r = await window.api.nodes.forgetServer(node.id);
+    if (r.ok) {
+      pushToast({ title: 'Node removed', body: 'Server cleanup skipped.', tone: 'success' });
+      void refreshNodes();
+    } else pushToast({ title: 'Could not finish', body: r.error, tone: 'error' });
+  };
+  const [retrying, setRetrying] = useState(false);
+  const retryRemoval = async () => {
+    setRetrying(true);
+    try {
+      const r = await window.api.nodes.retryRemoval(node.id);
+      pushToast(r.ok ? { title: 'Removal step done', body: 'The removal moved on.', tone: 'success' } : { title: 'Still failing', body: r.error, tone: 'error' });
+      void refreshNodes();
+    } finally {
+      setRetrying(false);
+    }
+  };
   const reconnectCard =
     node.target === 'remote' && !sshOk ? (
       <div className="callout callout-warn text-xs flex flex-col gap-2">
@@ -77,23 +102,13 @@ export function SolanaNodePanel({ node, status }: { node: DeployedNode; status: 
         </div>
         {node.removalStage === 'sweep' && node.pendingHostCleanup ? (
           <div className="flex items-center gap-2 flex-wrap">
-            <span>Deleted that server already? The bond and node key are back in your wallet, so the app can finish without it.</span>
+            <span>
+              Last cleanup attempt failed: {node.pendingHostCleanup.reason}. Deleted that server already? The bond and node key are back in
+              your wallet, so the app can finish without it.
+            </span>
             <button
               className="btn btn-secondary btn-sm"
-              onClick={async () => {
-                const ok = await confirm({
-                  title: 'Finish without the server?',
-                  body: `Use this only if ${node.host ?? 'the server'} no longer exists. The app forgets this node; the firewall rules and node folder it made on that server are not cleaned up.`,
-                  tone: 'danger',
-                  confirmLabel: 'Server is gone',
-                });
-                if (!ok) return;
-                const r = await window.api.nodes.forgetServer(node.id);
-                if (r.ok) {
-                  pushToast({ title: 'Node removed', body: 'Server cleanup skipped.', tone: 'success' });
-                  void refreshNodes();
-                } else pushToast({ title: 'Could not finish', body: r.error, tone: 'error' });
-              }}
+              onClick={() => void forgetServer()}
             >
               Server is gone
             </button>
@@ -151,7 +166,61 @@ export function SolanaNodePanel({ node, status }: { node: DeployedNode; status: 
         </div>
         <div className="card-body flex flex-col gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
           {reconnectCard}
-          {node.removalStage === 'unbonding' ? (
+          {node.removalError && (
+            <div className="flex items-start gap-1" style={{ color: 'var(--red)' }} role="alert">
+              <MIcon name="error" size={12} />
+              <span>
+                Last attempt ({new Date(node.removalError.at).toLocaleTimeString()}) failed: {node.removalError.message} The app
+                keeps retrying.
+              </span>
+            </div>
+          )}
+          {node.pendingHostCleanup && sshOk && (
+            // T1: host cleanup failing with SSH connected used to show only "Working…": no reason, no action.
+            <div className="flex flex-col gap-2" role="alert">
+              <div style={{ color: 'var(--red)' }}>
+                The bond and node key are back in your wallet. Cleaning up {node.host ?? 'the server'} failed: {node.pendingHostCleanup.reason}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button className="btn btn-primary btn-sm" disabled={retrying} onClick={() => void retryRemoval()}>
+                  <MIcon name="refresh" size={12} /> {retrying ? 'Retrying…' : 'Retry cleanup now'}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => void forgetServer()}>
+                  Server is gone
+                </button>
+              </div>
+            </div>
+          )}
+          {node.removalError && (
+            <div>
+              <button className="btn btn-secondary btn-sm" disabled={retrying} onClick={() => void retryRemoval()}>
+                <MIcon name="refresh" size={12} /> {retrying ? 'Retrying…' : 'Retry now'}
+              </button>
+            </div>
+          )}
+          {node.removalError && /Docker|chain-call server|Chain-call server/i.test(node.removalError.message) && (
+            // Never a dead end (T1): the two ways out of "no Docker here" are one click away.
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() =>
+                  void window.api.docker.start().then((r) =>
+                    pushToast(
+                      r.started
+                        ? { title: 'Starting Docker Desktop', body: 'The removal continues once Docker is up (about 30 s).', tone: 'info' }
+                        : { title: 'Could not start Docker Desktop', body: r.error ?? 'Start it by hand, or use a server instead.', tone: 'error' },
+                    ),
+                  )
+                }
+              >
+                <MIcon name="play_arrow" size={12} /> Start Docker Desktop
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={() => navigate({ name: 'settings' })}>
+                <MIcon name="dns" size={12} /> Use a server instead
+              </button>
+            </div>
+          )}
+          {node.removalStage === 'unbonding' || node.removalStage === 'withdraw-bond' ? (
             <>
               <div>
                 The node is closed on chain. Its 1 tDVPN bond unlocks{' '}

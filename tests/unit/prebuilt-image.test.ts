@@ -37,11 +37,11 @@ describe('prebuilt image: assets', () => {
     const b = prebuiltAssetFor('aarch64');
     expect(a.arch).toBe('amd64');
     expect(b.arch).toBe('arm64');
-    expect(a.file).toBe('sentinel-dvpnd-image-0.3.0-linux-amd64.tar.gz');
-    expect(b.file).toBe('sentinel-dvpnd-image-0.3.0-linux-arm64.tar.gz');
+    expect(a.file).toBe('sentinel-dvpnd-image-0.3.7-linux-amd64.tar.gz');
+    expect(b.file).toBe('sentinel-dvpnd-image-0.3.7-linux-arm64.tar.gz');
     expect(a.url).toBe(`${PREBUILT_IMAGE_RELEASE_URL}/${a.file}`);
-    expect(PREBUILT_IMAGE_RELEASE_URL).toMatch(/^https:\/\/github\.com\/Sentinel-Bluebuilder\/sentinel-solana-node-manager\/releases\/download\/node-image-0\.3\.0$/);
-    expect(PREBUILT_IMAGE_TAG).toBe('node-manager/dvpnd:prebuilt-0.3.0');
+    expect(PREBUILT_IMAGE_RELEASE_URL).toMatch(/^https:\/\/github\.com\/Sentinel-Bluebuilder\/sentinel-solana-node-manager\/releases\/download\/node-image-0.3.7$/);
+    expect(PREBUILT_IMAGE_TAG).toBe('node-manager/dvpnd:prebuilt-0.3.7');
   });
 
   it('release builds have both hashes pinned as 64-char lowercase hex', () => {

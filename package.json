@@ -1,6 +1,6 @@
 {
   "name": "sentinel-node-manager-solana",
-  "version": "0.3.0",
+  "version": "0.3.1-rc.1",
   "private": true,
   "description": "Sentinel Node Manager (Solana devnet) — desktop app for deploying and managing Sentinel dVPN nodes on the Solana program",
   "main": "out/main/index.cjs",

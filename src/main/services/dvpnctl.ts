@@ -425,7 +425,15 @@ export interface DaemonSession {
 
 export async function daemonSessions(rt: NodeRuntime): Promise<DaemonSession[]> {
   const r = await ctlDaemon<DaemonSession[] | { sessions?: DaemonSession[] }>(rt, ['node', 'sessions'], 'listing sessions');
-  return Array.isArray(r) ? r : (r.sessions ?? []);
+  return liveSessions(Array.isArray(r) ? r : (r.sessions ?? []));
+}
+
+/**
+ * The daemon keeps ended sessions in its list with status "closed" (e.g. the paid self-test,
+ * closed 7 s after it opened, NM-C9 T9 f). Only the others are live.
+ */
+export function liveSessions(all: DaemonSession[]): DaemonSession[] {
+  return all.filter((s) => String(s.status ?? '').toLowerCase() !== 'closed');
 }
 
 export async function daemonRedeem(rt: NodeRuntime): Promise<unknown> {

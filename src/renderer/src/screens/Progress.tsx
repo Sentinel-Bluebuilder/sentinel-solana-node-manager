@@ -191,9 +191,15 @@ export function Progress({ jobId, moniker, origin }: Props) {
                   <MIcon name="add" size={14} />
                   Host another node
                 </button>
-                <button className="btn btn-primary" onClick={onDone}>
-                  <MIcon name="arrow_forward" size={14} />
-                  Open node
+                <button
+                  className="btn btn-primary"
+                  onClick={onDone}
+                  aria-disabled={seedPending}
+                  title={seedPending ? 'Save the recovery phrase first (dialog below)' : undefined}
+                  style={seedPending ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}
+                >
+                  <MIcon name={seedPending ? 'lock' : 'arrow_forward'} size={14} />
+                  {seedPending ? 'Save phrase to open node' : 'Open node'}
                 </button>
               </>
             ) : phase === 'error' || phase === 'cancelled' ? (
@@ -263,12 +269,13 @@ export function Progress({ jobId, moniker, origin }: Props) {
           <MIcon name="schedule" size={18} />
           <div className="flex-1 min-w-0">
             <div className="text-[13px] font-semibold" style={{ color: 'var(--text)' }}>
-              First build takes 10–15 minutes
+              Preparing the node image (once per machine)
             </div>
             <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              Compiling dvpnd, dvpnctl and the protocol binaries from source inside Docker. Subsequent
-              deploys reuse the cached image and start in under a minute. Safe
-              to leave the screen — progress is preserved.
+              {/* NM-C9: the default path downloads the prebuilt image; the old text described only a source build. */}
+              The prebuilt node image (about 100 MB) downloads once and its checksum is checked: a minute or two.
+              Building from source instead takes 10–15 minutes. A machine that already has the image skips this
+              step, and later deploys start in under a minute. Safe to leave the screen — progress is preserved.
             </div>
           </div>
         </div>

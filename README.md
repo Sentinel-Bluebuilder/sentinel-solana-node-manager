@@ -14,6 +14,8 @@ program** (devnet), on this machine (Docker Desktop) or on a VPS over SSH.
 
 Latest release: [**Releases**](https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/latest)
 
+Release candidate: [**v0.3.1-rc1**](https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/tag/v0.3.1-rc1) adds the HNS Resolver for node users and chain actions without Docker on this computer (see CHANGELOG). Its files use the same names below with `0.3.1-rc.1` in place of `0.3.0`.
+
 | System | File | Install |
 |---|---|---|
 | Windows 10/11 x64 | `Sentinel-Node-Manager-0.3.0-win-x64-setup.exe` | Run it. One click, no admin prompt; the app opens when setup ends |

@@ -29,6 +29,7 @@ import {
   type SendTxResult,
   type UpdateNodePricingRequest,
   type SetProtocolRequest,
+  type SetHandshakeDnsRequest,
   type NodeTestResult,
   type WalletState,
 } from '../shared/types';
@@ -163,18 +164,32 @@ const api = {
       ipcRenderer.invoke(IPC.NODES_REVEAL_MNEMONIC, nodeId),
     setProtocol: (req: SetProtocolRequest): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.NODES_SET_PROTOCOL, req),
+    /** Server that runs chain commands when this computer's Docker cannot (memory only). null forgets it. */
+    setChainHost: (creds: SSHCredentials | null): Promise<{ ok: boolean; error?: string; label: string | null }> =>
+      ipcRenderer.invoke(IPC.CHAIN_HOST_SET, creds),
+    chainHost: (): Promise<string | null> => ipcRenderer.invoke(IPC.CHAIN_HOST_GET),
+    /** Turn the HNS resolver (hnsd) on or off; restarts the node daemon. */
+    setHandshakeDns: (req: SetHandshakeDnsRequest): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC.NODES_SET_HANDSHAKE_DNS, req),
     redeem: (id: string): Promise<{ ok: boolean; result?: unknown; error?: string }> =>
       ipcRenderer.invoke(IPC.NODES_REDEEM, id),
     relist: (id: string): Promise<{ ok: boolean; txHash?: string; error?: string }> =>
       ipcRenderer.invoke(IPC.NODES_RELIST, id),
     withdrawBond: (id: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.NODES_WITHDRAW_BOND, id),
+    retryRemoval: (id: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke(IPC.NODES_RETRY_REMOVAL, id),
     /** Finish a removal whose server no longer exists (bond + key already home). */
     forgetServer: (id: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.NODES_FORGET_SERVER, id),
     /** `clientOn: 'here'` runs the paying client on this machine (a real outside client for a remote node). */
     test: (id: string, opts?: { clientOn?: 'host' | 'here' }): Promise<NodeTestResult> => ipcRenderer.invoke(IPC.NODES_TEST, id, opts),
     sweepTestChannels: (opts?: { dryRun?: boolean }): Promise<unknown> => ipcRenderer.invoke(IPC.NODES_SWEEP_TEST_CHANNELS, opts),
+    /** Test-node escrow waiting to come home (fix B). */
+    testEscrow: (): Promise<{ channels: number; open: number; nextMaturesAt?: string; refundPending: boolean; lastError?: { message: string; at: number }; lastSweepAt?: number }> =>
+      ipcRenderer.invoke(IPC.TEST_ESCROW_STATUS),
+    /** Start closes / finish matured closes now; null when nothing was due or a sweep is running. */
+    reclaimTestEscrow: (): Promise<{ startedClose: string[]; closed: string[]; withdrawnBase: number; errors: string[] } | null> =>
+      ipcRenderer.invoke(IPC.TEST_ESCROW_RECLAIM),
     leases: (id: string): Promise<NodePlanLink[]> => ipcRenderer.invoke(IPC.NODES_LEASES, id),
     sessions: (id: string): Promise<unknown[]> => ipcRenderer.invoke(IPC.NODES_SESSIONS, id),
     closeSession: (id: string, sid: string): Promise<{ ok: boolean; error?: string }> =>

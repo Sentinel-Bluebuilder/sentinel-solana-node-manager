@@ -25,6 +25,8 @@
  *   P13 finish      (--finish run, after unbonding / grace) withdraw bond, sweep key,
  *                   close + refund test channels, final balances
  *   P14 report      diagnostics export + JSON/Markdown report
+ *   P15 hns         (after P7) HNS on → routing → HNS + ICANN names resolve through real tunnels;
+ *                   off → the same probe fails the HNS name (negative control)
  *
  * Rules: sequential only, ≥7 s between transactions, acts only on the node(s)
  * it deploys and the channels it opens.
@@ -58,8 +60,8 @@ const argv = process.argv.slice(2);
 // Declared surface. An undeclared flag must never be ignored: `--help` silently
 // started a full chain run (spending devnet funds) because unknown flags were
 // dropped, the same class of bug the app's own CLI was hardened against.
-const BOOL_FLAGS = ['finish', 'keep', 'help'];
-const VALUE_FLAGS = ['target', 'port', 'protocols', 'rpc-env', 'ssh-host', 'ssh-user', 'ssh-key', 'ssh-port'];
+const BOOL_FLAGS = ['finish', 'keep', 'help', 'no-hns'];
+const VALUE_FLAGS = ['target', 'port', 'protocols', 'rpc-env', 'ssh-host', 'ssh-user', 'ssh-key', 'ssh-port', 'hns-protocols'];
 const USAGE = `Sentinel Node Manager (Solana devnet) — E2E harness
 
 Usage: node tests/e2e/cli-e2e.mjs [options]
@@ -68,6 +70,8 @@ Usage: node tests/e2e/cli-e2e.mjs [options]
   --port <n>              First port of the node's 5-port block.
   --protocols a,b,c       Subset of ${['wireguard', 'amneziawg', 'v2ray', 'xray', 'openvpn', 'hysteria2'].join('|')}.
   --keep                  Leave the node deployed at the end.
+  --hns-protocols a,b     P15: protocols for the HNS probe (default all six; V2Ray/Xray are probed through the SOCKS proxy).
+  --no-hns                Skip P15 (HNS resolver on/off through a real client).
   --finish                Only finish pending work (bonds, test channels), deploy nothing.
   --rpc-env <path>        .env holding the app's dedicated RPC url.
   --ssh-host/-user/-key/-port   Remote target credentials.
@@ -124,6 +128,11 @@ const hostOf = (u) => {
 };
 const PROGRAM_ID = 'J52dyXW3a6mkatvrQct3fo6dA9vqUtcsdBt5gGqrTBXs';
 const TX_GAP_MS = 7_000;
+// P15: tunnel protocols only (V2Ray/Xray are SOCKS proxies: the client's own DNS never enters the node).
+const SKIP_HNS = flag('no-hns');
+const HNS_MATRIX = opt('hns-protocols', 'wireguard,amneziawg,openvpn,v2ray,xray,hysteria2').split(',').filter((p) => ['wireguard', 'amneziawg', 'openvpn', 'v2ray', 'xray', 'hysteria2'].includes(p));
+// hnsd synced in 200-242 s in H1/H2.
+const HNS_SYNC_MS = 240_000;
 const RUN_ID = new Date().toISOString().replace(/[:.]/g, '-');
 const STATE_FILE = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'e2e-state.json');
 const REPORT_DIR = path.join(path.dirname(STATE_FILE), 'reports');
@@ -967,6 +976,92 @@ async function main() {
       assert(r.ok, r.error);
       return 'ok';
     });
+  }
+
+  // ── P15 HNS ──
+  // HNS on → the image routes tunnel DNS (port 53, whatever server the client asked) to the node's
+  // split resolver: HNS names → hnsd root + unbound, ICANN names → 1.1.1.1. A paid client then asks
+  // 1.1.1.1 for an HNS name through the tunnel. Off is the negative control: the same HNS lookup must
+  // fail while ICANN names keep working.
+  if (!SKIP_HNS) {
+    phase('P15 HNS resolver');
+    const hnsTest = async (label, wantHns, extra = '') => {
+      const t0 = Date.now();
+      let res;
+      try {
+        res = await call(`nodes.test ${nodeId}${extra}`, 600_000);
+      } catch (err) {
+        res = { ok: false, error: err.message, steps: [] };
+      }
+      for (const st of (res.steps ?? []).filter((s) => /HNS_DNS|ICANN_DNS/.test(s))) console.log(`        · ${st.slice(0, 150)}`);
+      if (!res.ok) return record('FAIL', label, `session failed: ${(res.error ?? '').split('\n')[0]}`, Date.now() - t0);
+      if (res.hnsDns === undefined) return record('FAIL', label, 'the client did not run the HNS probe (no HNS_DNS line)', Date.now() - t0);
+      if (res.hnsDns !== wantHns) return record('FAIL', label, `HNS name ${res.hnsDns ? 'resolved' : 'did not resolve'} (want ${wantHns ? 'resolve' : 'fail'})`, Date.now() - t0);
+      if (res.icannDns !== true) return record('FAIL', label, 'ICANN name example.com did not resolve through the node', Date.now() - t0);
+      return record('PASS', label, `HNS ${res.hnsDns ? 'resolves' : 'does not resolve'} · ICANN resolves · ${res.downloadedBytes} B`, Date.now() - t0);
+    };
+    // 0.3.5: wait on the sync state the app reports (also proves the reporting); older images: fixed wait.
+    const waitSynced = async (label) => {
+      const t0 = Date.now();
+      let st;
+      while (Date.now() - t0 < 15 * 60_000) {
+        st = await call(`nodes.status ${nodeId}`, 60_000).catch(() => null);
+        const s = st?.hnsSync?.state;
+        if (s === 'synced') return record('PASS', `${label}: app reports HNS synced`, `${Math.round((Date.now() - t0) / 1000)} s · height ${st.hnsSync.height}`, Date.now() - t0);
+        if (s === 'unknown' || s === undefined) { await sleep(HNS_SYNC_MS); return record('SKIP', `${label}: app reports HNS synced`, `no sync status (image before 0.3.5): waited ${HNS_SYNC_MS / 1000} s`); }
+        if (s === 'stalled') return record('FAIL', `${label}: app reports HNS synced`, `stalled: ${JSON.stringify(st.hnsSync)}`, Date.now() - t0);
+        await sleep(10_000);
+      }
+      return record('FAIL', `${label}: app reports HNS synced`, `not synced in 15 min: ${JSON.stringify(st?.hnsSync)}`, Date.now() - t0);
+    };
+    const on = await check('nodes.setHns on → hnsd running and users\' DNS routed (≤ 12 min sync)', async () => {
+      const r = await call(`nodes.setHns ${nodeId} on`, 420_000);
+      assert(r.ok !== false, r.error ?? JSON.stringify(r).slice(0, 160));
+      const until = Date.now() + 12 * 60_000;
+      let st;
+      while (Date.now() < until) {
+        st = await call(`nodes.status ${nodeId}`, 60_000);
+        if (st?.hnsdRunning && st?.hnsRouting) return 'hnsd running · routing on';
+        await sleep(20_000);
+      }
+      throw new Error(`not routing after 12 min: hnsdRunning=${st?.hnsdRunning} hnsRouting=${st?.hnsRouting}`);
+    });
+    if (on) {
+      await waitSynced('HNS on (fresh sync)');
+      for (const proto of HNS_MATRIX) {
+        if (proto !== 'wireguard') {
+          const sw = await check(`nodes.setProtocol ${proto} keeps HNS on`, async () => {
+            const r = await call(`nodes.setProtocol ${nodeId} --service ${proto}`, 420_000);
+            assert(r.ok, r.error);
+            const st = await call(`nodes.status ${nodeId}`, 60_000);
+            assert(st?.hnsRouting, `hnsRouting=${st?.hnsRouting} after the protocol switch`);
+            return 'routing on';
+          });
+          if (!sw) continue;
+          await waitSynced(`after switch to ${proto} (checkpoint)`);
+        }
+        await hnsTest(`HNS name resolves through a ${proto} tunnel (ICANN still resolves)`, true);
+        await sleep(TX_GAP_MS);
+      }
+      if (HNS_MATRIX[HNS_MATRIX.length - 1] !== 'wireguard') {
+        await check('nodes.setProtocol back to wireguard (HNS)', async () => {
+          const r = await call(`nodes.setProtocol ${nodeId} --service wireguard`, 420_000);
+          assert(r.ok, r.error);
+          return 'ok';
+        });
+      }
+    }
+    await check('nodes.setHns off → hnsd stopped, routing off', async () => {
+      const r = await call(`nodes.setHns ${nodeId} off`, 420_000);
+      assert(r.ok !== false, r.error ?? JSON.stringify(r).slice(0, 160));
+      await sleep(20_000);
+      const st = await call(`nodes.status ${nodeId}`, 60_000);
+      assert(!st?.hnsRouting, `hnsRouting still ${st?.hnsRouting}`);
+      return 'off';
+    });
+    // Negative control: the same probe with HNS off must fail the HNS name and keep ICANN working.
+    await hnsTest('HNS off: HNS name fails through the tunnel, ICANN still resolves (negative control)', false, ' --hns-probe');
+    await sleep(TX_GAP_MS);
   }
 
   await check('nodes.positions + nodes.redemptions show the paid sessions', async () => {

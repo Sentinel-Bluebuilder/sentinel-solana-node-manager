@@ -2,13 +2,13 @@ import { PublicKey } from '@solana/web3.js';
 import { MINT, PROGRAM_ID } from './chain';
 import { ctl, ctlConfigToml, programParams, type TxResult } from './dvpnctl';
 import { camelKeys } from './ctl-json';
-import { openRuntime, type NodeRuntime } from './node-runtime';
-import { chainCtlImageTag, localCtlImageTag } from './docker';
+import type { NodeRuntime } from './node-runtime';
+import { openWalletCtl } from './node-manager';
 import { appKeypair, tokenAccount } from './wallet';
 import { keypairToJson } from './keys';
 import { pickRPC } from './solana-client';
 import { readStore, writeStore } from './store';
-import { RESERVED_RUNTIME_HOME_IDS } from './validate';
+import { RESERVED_RUNTIME_HOME_IDS, shouldLogRepeat, sweepIsDue } from './validate';
 import { addEvent } from './events';
 import { log } from './logger';
 
@@ -73,7 +73,7 @@ export async function recordTestChannel(channel: string, node: string): Promise<
  */
 export async function walletChannelsTo(node: string, imageTag?: string): Promise<Set<string>> {
   const owner = (await appKeypair()).publicKey.toBase58();
-  const rt = await openRuntime({ id: CHANNEL_LIST_ID, target: 'local', runtimeId: undefined, host: undefined, imageTag: await localCtlImageTag(imageTag) });
+  const rt = await openWalletCtl(CHANNEL_LIST_ID, imageTag); // local Docker, else a connected server (fix A)
   try {
     await rt.prepare();
     await rt.writeFile('ctl/config.toml', ctlConfigToml(await pickRPC()), 0o600);
@@ -110,7 +110,7 @@ export async function sweepTestChannels(opts: { dryRun?: boolean } = {}): Promis
   const refundPendingBefore = !!store.testChannelRefundPending;
   const wallet = await appKeypair();
   const owner = wallet.publicKey.toBase58();
-  const rt = await openRuntime({ id: WALLET_CTL_ID, target: 'local', runtimeId: undefined, host: undefined, imageTag: await chainCtlImageTag() });
+  const rt = await openWalletCtl(WALLET_CTL_ID); // local Docker, else a connected server (fix A)
   try {
     await rt.prepare();
     await rt.writeFile('ctl/keys/owner.json', keypairToJson(wallet), 0o600);
@@ -137,13 +137,13 @@ export async function sweepTestChannels(opts: { dryRun?: boolean } = {}): Promis
           if (!dryRun) await ctl<TxResult>(rt, ['channel', 'start-close-channel', '--channel', t.channel], 'start-closing a test channel');
           out.startedClose.push(t.channel);
           out.pending.push({ channel: t.channel, maturesAt: new Date((now + params.channelCloseGraceSeconds) * 1000).toISOString() });
-          keep.push(t);
+          keep.push(dryRun ? t : { ...t, closeMaturesAt: new Date((now + params.channelCloseGraceSeconds) * 1000).toISOString() });
           if (!dryRun) await gap();
         } else if (v.status === 1) {
           const ready = v.closeStartedAt + params.channelCloseGraceSeconds;
           if (now < ready) {
             out.pending.push({ channel: t.channel, maturesAt: new Date(ready * 1000).toISOString() });
-            keep.push(t);
+            keep.push({ ...t, closeMaturesAt: new Date(ready * 1000).toISOString() });
             continue;
           }
           if (!dryRun) {
@@ -215,7 +215,89 @@ export async function sweepTestChannels(opts: { dryRun?: boolean } = {}): Promis
     }
   } finally {
     await rt.removeFile('ctl/keys/owner.json').catch((err: unknown) => log.warn('wallet ctl key cleanup failed', { err: String(err) }));
+    // Throwaway reserved home; on a helper server (fix A) nothing of the wallet may stay behind.
+    await rt.removeHome().catch((err: unknown) => log.warn('wallet ctl home cleanup failed', { err: String(err) }));
     await rt.close();
   }
   return out;
+}
+
+// ─── Test escrow: status + automatic reclaim (fix B, 0.3.1) ───
+
+export interface TestEscrowStatus {
+  /** Test channels whose escrow is not home yet. */
+  channels: number;
+  /** Open channels (close not started). */
+  open: number;
+  /** Earliest time a closing channel can be closed (ISO), if any is waiting. */
+  nextMaturesAt?: string;
+  /** A close credited the wallet's User balance and its withdraw still has to run. */
+  refundPending: boolean;
+  lastError?: { message: string; at: number };
+  lastSweepAt?: number;
+}
+
+let lastAutoSweep = 0;
+let lastSweepAt: number | undefined;
+let lastSweepError: { message: string; at: number } | undefined;
+// The last failure written to app.log (T4: a failure that repeats every tick is logged once an hour).
+let lastLoggedSweepFail: { message: string; at: number } | undefined;
+let sweepRunning = false;
+const AUTO_SWEEP_MIN_GAP_MS = 10 * 60_000;
+
+export async function testEscrowStatus(): Promise<TestEscrowStatus> {
+  const s = await readStore();
+  const tracked = s.testChannels ?? [];
+  const waiting = tracked.map((t) => t.closeMaturesAt).filter((x): x is string => !!x).sort();
+  return {
+    channels: tracked.length,
+    open: tracked.filter((t) => !t.closeMaturesAt).length,
+    nextMaturesAt: waiting[0],
+    refundPending: !!s.testChannelRefundPending,
+    lastError: lastSweepError,
+    lastSweepAt,
+  };
+}
+
+/**
+ * Run the sweep when it has work (called after every self-test and by the poller).
+ * `force` skips the 10-minute gap (right after a test, or the user's button).
+ * Failures are kept for the Wallet card (fix F), never only logged.
+ */
+export async function autoSweepTestChannels(opts: { force?: boolean } = {}): Promise<SweepResult | null> {
+  if (sweepRunning) return null;
+  const s = await readStore();
+  const tracked = s.testChannels ?? [];
+  const st = { open: tracked.filter((t) => !t.closeMaturesAt).length, refundPending: !!s.testChannelRefundPending };
+  const maturities = tracked.map((t) => t.closeMaturesAt).filter((x): x is string => !!x);
+  if (!sweepIsDue(st, maturities, Date.now())) return null;
+  if (!opts.force && Date.now() - lastAutoSweep < AUTO_SWEEP_MIN_GAP_MS) return null;
+  const unlocked = await appKeypair().then(() => true, (err: unknown) => (log.debug('auto sweep: no wallet', { err: (err as Error).message }), false));
+  if (!unlocked) return null;
+  lastAutoSweep = Date.now();
+  sweepRunning = true;
+  try {
+    const r = await sweepTestChannels();
+    lastSweepAt = Date.now();
+    lastSweepError = r.errors.length ? { message: r.errors.join('; ').slice(0, 400), at: Date.now() } : undefined;
+    const fields = { startedClose: r.startedClose.length, closed: r.closed.length, pending: r.pending.length, withdrawnBase: r.withdrawnBase, errors: r.errors.length };
+    // A sweep that only waited on grace periods sends nothing: debug, or it repeats every 10 min (T4).
+    if (r.startedClose.length || r.closed.length || r.withdrawnBase) log.info('test escrow sweep', fields);
+    else if (lastSweepError && shouldLogRepeat(lastLoggedSweepFail, lastSweepError.message, Date.now())) {
+      lastLoggedSweepFail = { message: lastSweepError.message, at: Date.now() };
+      log.warn('test escrow sweep', { ...fields, firstError: lastSweepError.message });
+    } else log.debug('test escrow sweep', fields);
+    if (!lastSweepError) lastLoggedSweepFail = undefined;
+    return r;
+  } catch (err) {
+    const message = (err as Error).message.slice(0, 400);
+    lastSweepError = { message, at: Date.now() };
+    if (shouldLogRepeat(lastLoggedSweepFail, message, Date.now())) {
+      lastLoggedSweepFail = { message, at: Date.now() };
+      log.warn('test escrow sweep failed (repeats are logged once an hour; the Wallet card shows the latest)', { err: message });
+    } else log.debug('test escrow sweep failed', { err: message });
+    throw err;
+  } finally {
+    sweepRunning = false;
+  }
 }

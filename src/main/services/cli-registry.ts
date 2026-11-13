@@ -64,6 +64,9 @@ import {
   withdrawFromNode,
   updateNodePricing,
   setNodeProtocol,
+  setNodeHandshakeDns,
+  useChainHost,
+  chainHostLabel,
   redeemNow,
   relistNow,
   withdrawBondNow,
@@ -443,7 +446,7 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
     group: 'deploy',
     summary: 'Kick off a deploy. Returns {jobId, nodeId} immediately.',
     usage:
-      `deploy.start --target local|remote --moniker foo --gb 0.002 --hr 0.001 [--lease 0.001] --service ${SERVICE_LIST} --port 20000 [--host 1.2.3.4] [--country US] [--ssh '{...}']`,
+      `deploy.start --target local|remote --moniker foo --gb 0.002 --hr 0.001 [--lease 0.001] --service ${SERVICE_LIST} --port 20000 [--host 1.2.3.4] [--country US] [--hns] [--ssh '{...}']`,
     args: [
       { name: 'target', kind: 'flag', required: true, describe: '"local" or "remote".' },
       { name: 'moniker', kind: 'flag', required: true, describe: 'Public node name.' },
@@ -455,6 +458,7 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
       { name: 'host', kind: 'flag', describe: 'Public IP / DNS clients dial (default: LAN IP or SSH host).' },
       { name: 'remoteUrl', kind: 'flag', describe: 'Alias of --host.' },
       { name: 'country', kind: 'flag', describe: 'Two-letter country (default: geoip).' },
+      { name: 'hns', kind: 'bool', describe: 'Run the HNS resolver (hnsd) with the node.' },
       { name: 'ssh', kind: 'flag', describe: 'JSON SSHCredentials (remote target; no multi-line keys — use --ssh-key-file).' },
       { name: 'ssh-host', kind: 'flag', describe: 'Remote host (alternative to --ssh).' },
       { name: 'ssh-user', kind: 'flag', describe: 'Remote user (default root).' },
@@ -500,6 +504,7 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
         remoteUrl: optionalFlag(p, 'host') ?? optionalFlag(p, 'remoteUrl'),
         country: optionalFlag(p, 'country'),
         ssh,
+        handshakeDns: boolFlag(p, 'hns'),
       };
       await primeDeploySettings();
       return startDeploy(req, () => {
@@ -733,6 +738,50 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
     },
   },
   {
+    name: 'nodes.chainHost',
+    group: 'nodes',
+    summary: 'Use a server for chain commands when this computer has no Docker (fix A). No flags = show; --off = forget.',
+    usage: 'nodes.chainHost [--ssh-host 1.2.3.4 [--ssh-user root] [--ssh-port 22] (--ssh-key-file <path> | --ssh-password <pw>)] [--off]',
+    args: [
+      { name: 'ssh-host', kind: 'flag', describe: 'Server address.' },
+      { name: 'ssh-user', kind: 'flag', describe: 'User (default root).' },
+      { name: 'ssh-port', kind: 'flag', describe: 'SSH port (default 22).' },
+      { name: 'ssh-key-file', kind: 'flag', describe: 'Private key file; read by the app, never echoed.' },
+      { name: 'ssh-password', kind: 'flag', describe: 'Password (alternative to a key file).' },
+      { name: 'off', kind: 'bool', describe: 'Forget the chain-call server.' },
+    ],
+    exec: async (p) => {
+      if (boolFlag(p, 'off')) return useChainHost(null);
+      const host = optionalFlag(p, 'ssh-host');
+      if (!host) return { label: chainHostLabel() };
+      const keyFile = optionalFlag(p, 'ssh-key-file');
+      return useChainHost(
+        validateSSHCredentials({
+          host,
+          port: numberFlag(p, 'ssh-port') ?? 22,
+          username: optionalFlag(p, 'ssh-user') ?? 'root',
+          privateKey: keyFile ? await readArgFile('ssh-key-file', keyFile) : undefined,
+          password: optionalFlag(p, 'ssh-password'),
+        }),
+      );
+    },
+  },
+  {
+    name: 'nodes.setHns',
+    group: 'nodes',
+    summary: 'Turn the HNS resolver (hnsd) on or off; restarts the daemon and checks hnsd followed.',
+    usage: 'nodes.setHns <nodeId> on|off',
+    args: [
+      { name: 'nodeId', kind: 'positional', required: true, describe: 'Node id.' },
+      { name: 'state', kind: 'positional', required: true, describe: '"on" or "off".' },
+    ],
+    exec: (p) => {
+      const state = p.positional[1];
+      if (state !== 'on' && state !== 'off') throw new Error('state must be "on" or "off"');
+      return setNodeHandshakeDns(requireNodeId(p, 0), state === 'on');
+    },
+  },
+  {
     name: 'nodes.redeem',
     group: 'nodes',
     summary: 'Ask the node daemon to redeem client vouchers on chain now.',
@@ -787,15 +836,16 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
     name: 'nodes.test',
     group: 'nodes',
     summary: 'Run a real paid session against the node from a throwaway client container (wallet pays).',
-    usage: 'nodes.test <nodeId> [--client host|here]',
+    usage: 'nodes.test <nodeId> [--client host|here] [--hns-probe]',
     args: [
       { name: 'nodeId', kind: 'positional', required: true, describe: 'Node id.' },
       { name: 'client', kind: 'flag', describe: "Where the paying client runs: 'host' (the node's host, default) or 'here' (this machine — a real outside client for a remote node)." },
+      { name: 'hns-probe', kind: 'bool', describe: 'Also resolve an HNS name and an ICANN name through the tunnel with the HNS resolver off (with it on, the check always runs).' },
     ],
     exec: (p) => {
       const c = optionalFlag(p, 'client') ?? 'host';
       if (c !== 'host' && c !== 'here') throw new Error('--client must be host or here');
-      return testNodeSession(requireNodeId(p, 0), { clientOn: c });
+      return testNodeSession(requireNodeId(p, 0), { clientOn: c, hnsProbe: boolFlag(p, 'hns-probe') });
     },
   },
   {

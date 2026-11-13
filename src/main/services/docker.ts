@@ -128,17 +128,40 @@ export async function chainCtlImageTag(): Promise<string> {
  * fetched here once if missing: downloaded in prebuilt mode, built in source mode (see ctlImageChoice). Concurrent callers share one build.
  */
 const ctlBuilds = new Map<string, Promise<void>>();
+/**
+ * Last failed attempt to get a chain-call image, per tag. The poller asks every minute; without
+ * this, a stopped Docker made it log "getting the chain-call image" and retry once a minute
+ * forever (v0.3.0 app.log, 2026-11-12). Within the cooldown the same error is rethrown quietly.
+ */
+const CTL_IMAGE_RETRY_MS = 5 * 60_000;
+const ctlFailures = new Map<string, { at: number; err: Error }>();
 export async function localCtlImageTag(nodeTag: string | undefined): Promise<string> {
+  // Docker must answer first: hasImage() reads "unreachable" as "no image", which used to start a
+  // download that could never work. getClient() throws the structured desktop-not-running error.
+  await getClient();
   const choice = ctlImageChoice({
     nodeTag,
     nodeTagLocal: nodeTag ? await hasImage(nodeTag) : false,
     currentTag: await resolveImageTag(),
   });
   if (choice.build && !(await hasImage(choice.tag))) {
+    const failed = ctlFailures.get(choice.tag);
+    if (failed && Date.now() - failed.at < CTL_IMAGE_RETRY_MS) throw failed.err;
     let p = ctlBuilds.get(choice.tag);
     if (!p) {
       log.info('getting the chain-call image on this machine (download or build, per Settings → Node image)', { nodeTag, tag: choice.tag });
-      p = ensureImage(choice.tag, (line) => log.debug('ctl image', { line })).finally(() => ctlBuilds.delete(choice.tag));
+      p = ensureImage(choice.tag, (line) => log.debug('ctl image', { line }))
+        .then(
+          () => {
+            ctlFailures.delete(choice.tag);
+          },
+          (err: unknown) => {
+            ctlFailures.set(choice.tag, { at: Date.now(), err: err as Error });
+            log.warn('chain-call image not available; next try in 5 min', { tag: choice.tag, err: (err as Error).message });
+            throw err;
+          },
+        )
+        .finally(() => ctlBuilds.delete(choice.tag));
       ctlBuilds.set(choice.tag, p);
     }
     await p;
@@ -651,6 +674,14 @@ export const NODE_SYSCTLS: Record<string, string> = {
 };
 
 /**
+ * Container log cap (json-file, at most 3 x 20 MB). Docker keeps container logs forever by
+ * default; with the HNS resolver on, hnsd writes hundreds of thousands of lines while it
+ * syncs (H2 run 2026-11-12: 680 000 in ~3 min) and the daemon copies them to its log, which
+ * would fill a small VPS disk.
+ */
+export const NODE_LOG_OPTS: Record<string, string> = { 'max-size': '20m', 'max-file': '3' };
+
+/**
  * docker CLI form (remote runtime). The Engine API equivalent of systempaths is
  * MaskedPaths/ReadonlyPaths = []; apparmor=unconfined is accepted by both.
  * AppArmor (Ubuntu's docker-default profile) denies writes under /proc/sys even
@@ -719,6 +750,7 @@ export async function runNode(opts: RunNodeOptions): Promise<string> {
           ReadonlyPaths: [],
           SecurityOpt: NODE_API_SECURITY_OPT,
           Sysctls: NODE_SYSCTLS,
+          LogConfig: { Type: 'json-file', Config: NODE_LOG_OPTS },
           Devices: [{ PathOnHost: '/dev/net/tun', PathInContainer: '/dev/net/tun', CgroupPermissions: 'rwm' }],
           PortBindings: portBindings,
         },

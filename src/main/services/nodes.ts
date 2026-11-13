@@ -26,10 +26,14 @@ export const updateNodePricing = (
   opts: { leaseHourlyPriceDVPN?: number } = {},
 ) => manager.updateNodePricing(id, gigabytePriceDVPN, hourlyPriceDVPN, opts);
 export const setNodeProtocol = (id: string, serviceType: VpnServiceType) => manager.setNodeProtocol(id, serviceType);
+export const setNodeHandshakeDns = (id: string, enabled: boolean) => manager.setNodeHandshakeDns(id, enabled);
+export const useChainHost = (creds: import('../../shared/types').SSHCredentials | null) => manager.useChainHost(creds);
+export const chainHostLabel = () => manager.chainHostLabel();
 export const redeemNow = (id: string) => manager.redeemNow(id);
 export const relistNow = (id: string) => manager.relistNow(id);
 export const withdrawBondNow = (id: string) => manager.withdrawBondNow(id);
+export const retryRemovalNow = (id: string) => manager.retryRemovalNow(id);
 export const forgetServerNow = (id: string) => manager.forgetServerNow(id);
-export const testNodeSession = (id: string, opts: { clientOn?: 'host' | 'here' } = {}) => testNode(id, opts);
+export const testNodeSession = (id: string, opts: { clientOn?: 'host' | 'here'; hnsProbe?: boolean } = {}) => testNode(id, opts);
 
 export type { DeployedNode, NodeLiveStatus };

@@ -3,10 +3,12 @@ import { PageHeader } from '../components/PageHeader';
 import { StatCard } from '../components/StatCard';
 import { QRCode } from '../components/QRCode';
 import { MIcon } from '../components/MIcon';
+import { TestEscrowCard } from '../components/TestEscrowCard';
 import { useApp } from '../store/app';
 import { fmtDVPN, relativeTime, shortAddr } from '../lib/format';
 import { KIND_ICON } from '../lib/events';
 import type { AppEvent, SendTxResult } from '../../../shared/types';
+import { LAMPORTS_PER_SOL, maxSendableSol, solReserveLamports } from '../../../shared/sol-reserve';
 
 export function Wallet() {
   const { wallet, nodes, events, refreshWallet, refreshNodes, confirm, pushToast, logoutWallet, navigate } =
@@ -67,8 +69,8 @@ export function Wallet() {
       ? null
       : !Number.isFinite(solNum) || solNum < 0
         ? 'SOL amount must be zero or more.'
-        : solNum + 0.00001 > solBalance
-          ? `Not enough SOL. You have ${solBalance.toFixed(4)} SOL (keep some for fees).`
+        : solNum > maxSendableSol(solBalance, amountNum > 0)
+          ? `Too much: at most ${maxSendableSol(solBalance, amountNum > 0)} SOL. The wallet keeps ${(solReserveLamports(amountNum > 0) / LAMPORTS_PER_SOL).toFixed(5)} SOL for the fee, its own rent${amountNum > 0 ? ' and the recipient\'s token account' : ''}.`
           : null;
   const canSend =
     !busy &&
@@ -77,7 +79,7 @@ export function Wallet() {
     !amountError &&
     !solError &&
     (amountNum > 0 || solNum > 0) &&
-    solBalance >= 0.00001 && // the network fee is paid in SOL
+    solBalance * LAMPORTS_PER_SOL >= solReserveLamports(amountNum > 0) && // fee + rent are paid in SOL (fix C)
     amountNum + gasHint <= balance;
 
   const copy = async () => {
@@ -323,7 +325,12 @@ export function Wallet() {
 
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <div className="field-label">Amount (tDVPN)</div>
+                <div className="field-label flex items-center justify-between">
+                  Amount (tDVPN)
+                  <button type="button" className="btn btn-ghost text-[10px] px-1 py-0" onClick={() => setAmount(String(balance))} title="All tDVPN (the fee is paid in SOL)">
+                    Max
+                  </button>
+                </div>
                 <input
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
@@ -344,7 +351,17 @@ export function Wallet() {
                 )}
               </div>
               <div>
-                <div className="field-label">SOL (optional)</div>
+                <div className="field-label flex items-center justify-between">
+                  SOL (optional)
+                  <button
+                    type="button"
+                    className="btn btn-ghost text-[10px] px-1 py-0"
+                    onClick={() => setSolAmount(String(maxSendableSol(solBalance, amountNum > 0)))}
+                    title="All SOL minus what the wallet must keep for the fee and rent"
+                  >
+                    Max
+                  </button>
+                </div>
                 <input
                   value={solAmount}
                   onChange={(e) => setSolAmount(e.target.value)}
@@ -428,6 +445,8 @@ export function Wallet() {
           )}
         </div>
       </div>
+
+      <TestEscrowCard />
 
       <div className="card flex flex-col">
         <div className="card-header">

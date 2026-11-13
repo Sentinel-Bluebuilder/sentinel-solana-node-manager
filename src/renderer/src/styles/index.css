@@ -457,6 +457,120 @@ html[data-theme='light'] body {
     border-color: var(--border);
   }
 
+  /* Switch (components/Switch.tsx) */
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  .switch:focus-visible .switch-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .switch-track {
+    position: relative;
+    width: 30px;
+    height: 17px;
+    border-radius: 999px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    transition: background 0.15s ease;
+    flex-shrink: 0;
+  }
+  .switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .switch-on {
+    color: var(--accent-bright);
+  }
+  .switch-on .switch-track {
+    background: var(--accent-dim);
+    border-color: transparent;
+  }
+  .switch-on .switch-thumb {
+    transform: translateX(13px);
+    background: var(--accent-bright);
+  }
+
+  /* Info tip (components/InfoTip.tsx): "?" badge + hover/focus bubble */
+  .info-tip {
+    position: relative;
+    display: inline-flex;
+  }
+  .info-tip-badge {
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text-muted);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    cursor: help;
+    padding: 0;
+  }
+  .info-tip-badge:hover,
+  .info-tip-badge:focus-visible {
+    color: var(--accent-bright);
+    border-color: var(--accent);
+    outline: none;
+  }
+  .info-tip-bubble {
+    position: absolute;
+    top: calc(100% + 6px);
+    z-index: 50;
+    width: max-content;
+    max-width: 280px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: var(--bg-card-solid);
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 400;
+    line-height: 1.45;
+    white-space: normal;
+    text-align: left;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    pointer-events: none;
+  }
+  .info-tip-right .info-tip-bubble {
+    right: 0;
+  }
+  .info-tip-left .info-tip-bubble {
+    left: 0;
+  }
+  .info-tip:hover .info-tip-bubble,
+  .info-tip-badge:focus-visible + .info-tip-bubble {
+    visibility: visible;
+    opacity: 1;
+  }
+
   /* Chain badge (sidebar logo tile / denom tag) */
   .chain-badge {
     width: 34px;

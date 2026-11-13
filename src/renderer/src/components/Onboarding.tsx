@@ -35,7 +35,7 @@ export function Onboarding() {
     {
       icon: 'savings',
       title: 'Fund your wallet first: 1 tDVPN + 0.06 SOL per node',
-      body: 'Each node locks a 1 tDVPN bond (returned when you remove it) and needs 0.05 SOL on its key for rent and fees. The Wallet page shows your address and a QR code; send devnet SOL and tDVPN there from any Solana wallet.',
+      body: 'Each node locks a 1 tDVPN bond (returned when you remove it) and needs 0.05 SOL on its key for rent and fees, plus about 0.01 SOL for the fees your wallet pays. The Wallet page shows your address and a QR code; send devnet SOL and tDVPN there from any Solana wallet.',
     },
   ] as const;
 

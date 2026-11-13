@@ -10,6 +10,7 @@ import {
   PauseCircle,
   PlayCircle,
   Plugs,
+  Globe,
   Rocket,
   SealCheck,
   ShieldCheck,
@@ -41,6 +42,7 @@ export const KIND_TONE: Record<EventKind, 'ok' | 'err' | 'warn' | 'accent'> = {
   'balance-refreshed': 'accent',
   'node-repriced': 'accent',
   'node-protocol-changed': 'accent',
+  'node-hns-changed': 'accent',
   'node-redeemed': 'ok',
   'node-delisted': 'warn',
   'node-closed': 'warn',
@@ -48,6 +50,7 @@ export const KIND_TONE: Record<EventKind, 'ok' | 'err' | 'warn' | 'accent'> = {
   'funds-swept': 'ok',
   'node-test-passed': 'ok',
   'node-test-failed': 'err',
+  'store-recovered': 'err',
 };
 
 const KIND_ICON_MAP: Record<EventKind, ComponentType<IconProps>> = {
@@ -71,6 +74,7 @@ const KIND_ICON_MAP: Record<EventKind, ComponentType<IconProps>> = {
   'balance-refreshed': ArrowsClockwise,
   'node-repriced': ArrowsClockwise,
   'node-protocol-changed': Plugs,
+  'node-hns-changed': Globe,
   'node-redeemed': SealCheck,
   'node-delisted': CloudSlash,
   'node-closed': Trash,
@@ -78,6 +82,7 @@ const KIND_ICON_MAP: Record<EventKind, ComponentType<IconProps>> = {
   'funds-swept': ArrowCircleUp,
   'node-test-passed': CheckCircle,
   'node-test-failed': WarningCircle,
+  'store-recovered': WarningCircle,
 };
 
 export const KIND_ICON: Record<EventKind, ComponentType<IconProps>> = new Proxy(KIND_ICON_MAP, {

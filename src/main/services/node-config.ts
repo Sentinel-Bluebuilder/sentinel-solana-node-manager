@@ -105,6 +105,8 @@ export interface NodeConfigPatch {
   /** Base units. */
   prices?: { perGb: number; perHour: number; leasePerHour: number };
   redeemThreshold?: number;
+  /** `[handshake_dns] enabled`: the daemon runs hnsd (HNS resolver) when true. */
+  handshakeDns?: boolean;
 }
 
 /**
@@ -129,6 +131,7 @@ export function patchNodeConfig(toml: string, p: NodeConfigPatch): string {
     out = setKey(out, 'prices', 'lease_per_hour', Math.round(p.prices.leasePerHour));
   }
   if (p.redeemThreshold !== undefined) out = setKey(out, 'redeem', keyIn(out, 'redeem', ['threshold', 'threshold_base_units']), p.redeemThreshold);
+  if (p.handshakeDns !== undefined) out = setKey(out, 'handshake_dns', 'enabled', p.handshakeDns);
   return out;
 }
 

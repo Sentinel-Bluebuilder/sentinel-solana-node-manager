@@ -18,6 +18,11 @@ describe('remoteFallbackError', () => {
     expect(m).toContain('no SSH connection');
     expect(m).toContain('buildx plugin');
   });
+  it('NM-C9-3: no SSH session at all -> Reconnect only, no Docker install hint (no Start Docker buttons)', () => {
+    const m = remoteFallbackError('198.51.100.20', 'the app has no SSH connection to it', 'Docker Desktop is not installed. Install it from https://www.docker.com/', true);
+    expect(m).toContain('Reconnect to 198.51.100.20');
+    expect(m).not.toMatch(/Docker/i);
+  });
 });
 
 // ─── Q0407: a protocol/price change whose confirming read FAILED says why ───

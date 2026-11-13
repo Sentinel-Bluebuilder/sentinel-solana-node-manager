@@ -339,6 +339,7 @@ export async function sendFrom(
     memo,
   );
   const res = await sendTx(ixs, signer, [], 'transfer');
+  log.info('send confirmed', { from: signer.publicKey.toBase58(), to, amountDVPN, amountSOL, sig: res.signature, feeLamports: res.feeLamports });
   await addEvent({
     kind: 'withdraw-sent',
     title: event.title,

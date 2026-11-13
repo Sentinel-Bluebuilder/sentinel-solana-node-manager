@@ -6,7 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Client } from 'ssh2';
-import { PREBUILT_IMAGE_SOURCE, PREBUILT_IMAGE_TAG, remoteLoadScript } from './prebuilt-image';
+import { PREBUILT_IMAGE_RELEASE_URL, PREBUILT_IMAGE_SOURCE, PREBUILT_IMAGE_TAG, remoteLoadScript } from './prebuilt-image';
 
 /** Download + load of the prebuilt image on a server (slow links included). */
 const PREBUILT_REMOTE_TIMEOUT_MS = 30 * 60_000;
@@ -18,6 +18,7 @@ import {
   NODE_ENV,
   NODE_SECURITY_OPT,
   NODE_SYSCTLS,
+  NODE_LOG_OPTS,
   containerLogs,
   containerName,
   ensureImage,
@@ -390,6 +391,14 @@ class RemoteRuntime implements NodeRuntime {
         },
       });
       if (r.exitCode !== 0 || !r.output.includes('PREBUILT_OK')) {
+        // NM-C9: a 404 means the release does not carry this image (not published yet), not a
+        // network or server fault. Say that first; keep the raw output for support.
+        if (/returned error: 404|404.*Not Found/i.test(r.output)) {
+          throw new Error(
+            `Node image ${PREBUILT_IMAGE_TAG.replace(/^.*prebuilt-/, '')} is not published yet: its download returned 404 (${PREBUILT_IMAGE_RELEASE_URL}). ` +
+              `Load the image on ${this.label} by hand, or use an app version whose node image is published.`,
+          );
+        }
         throw new Error(`Loading the node image on ${this.label} failed (exit ${r.exitCode}): ${r.output.trim().slice(-600)}`);
       }
       onLog(`[remote] ${PREBUILT_IMAGE_TAG} ready on ${this.label} (${PREBUILT_IMAGE_SOURCE})`);
@@ -545,6 +554,8 @@ class RemoteRuntime implements NodeRuntime {
       ...NODE_ENV.flatMap((e) => ['-e', e]),
     ];
     for (const [k, v] of Object.entries(NODE_SYSCTLS)) args.push('--sysctl', `${k}=${v}`);
+    args.push('--log-driver', 'json-file');
+    for (const [k, v] of Object.entries(NODE_LOG_OPTS)) args.push('--log-opt', `${k}=${v}`);
     for (const p of ports) args.push('-p', `${p}:${p}/tcp`, '-p', `${p}:${p}/udp`);
     args.push(this.imageTag, ...nodeCommand(await cliLayoutOf(this)));
     const r = await this.sh(this.docker(args), 120_000);

@@ -7,6 +7,7 @@ import { MIcon } from '../components/MIcon';
 import { CountryFlag } from '../components/CountryFlag';
 import { useApp } from '../store/app';
 import { SolanaNodePanel } from '../components/SolanaNodePanel';
+import { HnsChip, HnsResolverControl } from '../components/HnsResolverControl';
 import { fmtDVPN, fmtDVPNSend, fmtBytes, shortAddr } from '../lib/format';
 import type {
   DeployedNode,
@@ -320,14 +321,28 @@ export function NodeDetails({ id }: Props) {
   const statusTone =
     node.status === 'online'
       ? 'chip-success'
-      : node.status === 'loading'
+      : node.status === 'loading' || (!node.removalStage && status?.sshDisconnected)
         ? 'chip-warn'
         : 'chip-danger';
+  // T9 (e): after an app restart a server node shows "Not connected" until Reconnect, not "Error".
+  const notConnected = !node.removalStage && !!status?.sshDisconnected && node.status !== 'online';
   const statusLabel =
-    node.removalStage ? 'Removing' : node.status === 'online' ? 'Online' : node.status === 'loading' ? 'Starting' : node.status === 'error' ? 'Error' : 'Offline';
+    node.removalStage ? 'Removing' : notConnected ? 'Not connected' : node.status === 'online' ? 'Online' : node.status === 'loading' ? 'Starting' : node.status === 'error' ? 'Error' : 'Offline';
 
   return (
     <div className="flex flex-col h-full min-h-0 gap-3">
+      {node.lastError && (
+        // Fix F: background failures are shown, not only logged.
+        <div className="card" role="alert" style={{ borderColor: 'var(--red)' }}>
+          <div className="card-body flex items-start gap-2 text-xs" style={{ color: 'var(--red)' }}>
+            <MIcon name="error" size={14} />
+            <span>
+              {node.lastError.what} failed at {new Date(node.lastError.at).toLocaleTimeString()}: {node.lastError.message} The app keeps trying and
+              clears this when it works again.
+            </span>
+          </div>
+        </div>
+      )}
       <PageHeader
         title={node.moniker}
         subtitle={`${node.target === 'remote' ? 'Remote via SSH' : 'Local via Docker'} · ${node.serviceType} · ${node.host ?? '127.0.0.1'}:${node.port}`}
@@ -428,34 +443,40 @@ export function NodeDetails({ id }: Props) {
               <MIcon name="key" size={14} />
               Recovery phrase
             </button>
-            {node.status === 'offline' ? (
-              <button className="btn btn-primary" onClick={onStart} disabled={!!busy || !!node.removalStage}>
-                <MIcon name="play_arrow" size={14} />
-                {busy === 'start' ? 'Starting…' : 'Start'}
-              </button>
-            ) : (
-              <button className="btn btn-secondary" onClick={onRestart} disabled={!!busy || !!node.removalStage}>
-                <MIcon name="restart_alt" size={14} />
-                {busy === 'restart' ? 'Restarting…' : 'Restart'}
-              </button>
+            {/* NM-C9 (b): during a removal these do nothing; a disabled blue Start still read as
+                enabled next to the "Removing" pill, so they are hidden and the removal card leads. */}
+            {!node.removalStage && (
+              <>
+                {node.status === 'offline' ? (
+                  <button className="btn btn-primary" onClick={onStart} disabled={!!busy || !!node.removalStage}>
+                    <MIcon name="play_arrow" size={14} />
+                    {busy === 'start' ? 'Starting…' : 'Start'}
+                  </button>
+                ) : (
+                  <button className="btn btn-secondary" onClick={onRestart} disabled={!!busy || !!node.removalStage}>
+                    <MIcon name="restart_alt" size={14} />
+                    {busy === 'restart' ? 'Restarting…' : 'Restart'}
+                  </button>
+                )}
+                <button
+                  className="btn btn-secondary"
+                  onClick={onStop}
+                  disabled={!!busy || node.status === 'offline' || !!node.removalStage}
+                >
+                  <MIcon name="stop" size={14} />
+                  {busy === 'stop' ? 'Stopping…' : 'Stop'}
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={onRemove}
+                  disabled={!!busy || !!node.removalStage}
+                  title={node.removalStage ? 'Removal in progress — see the panel below' : 'Remove node: redeem, stop, delist, close on chain, return the bond and sweep the key to your wallet'}
+                >
+                  <MIcon name="warning" size={14} />
+                  {busy === 'remove' ? 'Removing…' : 'Remove node'}
+                </button>
+              </>
             )}
-            <button
-              className="btn btn-secondary"
-              onClick={onStop}
-              disabled={!!busy || node.status === 'offline' || !!node.removalStage}
-            >
-              <MIcon name="stop" size={14} />
-              {busy === 'stop' ? 'Stopping…' : 'Stop'}
-            </button>
-            <button
-              className="btn btn-danger"
-              onClick={onRemove}
-              disabled={!!busy || !!node.removalStage}
-              title={node.removalStage ? 'Removal in progress — see the panel below' : 'Remove node: redeem, stop, delist, close on chain, return the bond and sweep the key to your wallet'}
-            >
-              <MIcon name="warning" size={14} />
-              {busy === 'remove' ? 'Removing…' : 'Remove node'}
-            </button>
           </>
         }
       />
@@ -525,7 +546,11 @@ export function NodeDetails({ id }: Props) {
           <div className="stat-sub">
             {status?.reachable
               ? 'Listed and unexpired'
-              : status?.chainStatus === 'delisted'
+              : status?.configChange
+                ? `${changeLabel(status.configChange)}… the node is restarting`
+                : status?.sshDisconnected && status?.chainStatus !== 'delisted' && status?.chainStatus !== 'not-found'
+                  ? 'Not connected — reconnect to see its status'
+                  : status?.chainStatus === 'delisted'
                 ? 'Delisted on chain'
                 : status?.chainStatus === 'not-found'
                   ? 'Node account closed'
@@ -1208,6 +1233,7 @@ function IdentityDisclosure({
             <CountryFlag code={node.country} />
             <span>{countryLabel}</span>
           </span>
+          <HnsChip node={node} status={status} />
         </div>
         <MIcon name={open ? 'expand_less' : 'expand_more'} size={16} />
       </button>
@@ -1321,6 +1347,7 @@ function IdentityDisclosure({
                   </span>
                 }
               />
+              <KV label="HNS resolver" value={<HnsResolverControl node={node} status={status} />} />
               <button
                 className="btn btn-secondary btn-sm self-start"
                 style={{ marginTop: 6 }}
@@ -1951,3 +1978,14 @@ function LogRow({ line }: { line: ParsedLog }) {
   );
 }
 
+
+/** 'A protocol switch' -> 'Switching protocol' for the status line while a change runs (T9 d). */
+function changeLabel(change: string): string {
+  const m: Record<string, string> = {
+    'A protocol switch': 'Switching protocol',
+    'A restart': 'Restarting',
+    'A price change': 'Applying the new prices',
+    'An HNS resolver switch': 'Switching the HNS resolver',
+  };
+  return m[change] ?? 'Applying a change';
+}

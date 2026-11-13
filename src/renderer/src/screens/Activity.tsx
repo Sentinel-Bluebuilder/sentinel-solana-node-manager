@@ -30,12 +30,12 @@ const KIND_GROUPS: { id: string; label: string; kinds: EventKind[] }[] = [
   {
     id: 'wallet',
     label: 'Wallet',
-    kinds: ['wallet-created', 'wallet-restored', 'wallet-logout', 'balance-refreshed'],
+    kinds: ['wallet-created', 'wallet-restored', 'wallet-logout', 'balance-refreshed', 'store-recovered'],
   },
   {
     id: 'chain',
     label: 'On chain',
-    kinds: ['node-repriced', 'node-protocol-changed', 'node-redeemed', 'node-delisted', 'node-closed', 'bond-withdrawn', 'funds-swept'],
+    kinds: ['node-repriced', 'node-protocol-changed', 'node-hns-changed', 'node-redeemed', 'node-delisted', 'node-closed', 'bond-withdrawn', 'funds-swept'],
   },
   {
     id: 'withdraw',
@@ -70,6 +70,7 @@ const KIND_LABEL: Record<EventKind, string> = {
   'balance-refreshed': 'Balance refreshed',
   'node-repriced': 'Prices updated',
   'node-protocol-changed': 'Protocol changed',
+  'node-hns-changed': 'HNS resolver',
   'node-redeemed': 'Vouchers redeemed',
   'node-delisted': 'Node delisted',
   'node-closed': 'Node closed (unbonding)',
@@ -77,6 +78,7 @@ const KIND_LABEL: Record<EventKind, string> = {
   'funds-swept': 'Node key swept',
   'node-test-passed': 'Test session passed',
   'node-test-failed': 'Test session failed',
+  'store-recovered': 'App data recovered',
 };
 
 const TONE_COLOR: Record<'ok' | 'err' | 'warn' | 'accent', string> = {
