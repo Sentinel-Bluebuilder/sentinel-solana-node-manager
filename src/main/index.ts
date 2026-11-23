@@ -3,7 +3,9 @@ import { app, BrowserWindow, crashReporter, nativeImage, session, shell } from '
 import path from 'node:path';
 import { registerIpcHandlers } from './ipc';
 import { attachGlobalHandlers, log, logDir } from './services/logger';
-import { restartPollerCadence, startPoller, stopPoller } from './services/node-manager';
+import { applySavedLogins, restartPollerCadence, startPoller, stopPoller } from './services/node-manager';
+import { autoDiscover } from './services/adopt';
+import { readStore } from './services/store';
 import { replayPendingSpecs } from './services/node-specs';
 import { refreshWalletBalance } from './services/wallet';
 import { primeDeploySettings } from './services/deploy';
@@ -266,6 +268,18 @@ app.whenReady().then(async () => {
     startUpdater();
   } catch (err) {
     log.warn('startUpdater failed', { err: String(err) });
+  }
+  try {
+    await applySavedLogins();
+  } catch (err) {
+    log.warn('applySavedLogins failed', { err: String(err) });
+  }
+  // NM032: a wallet with an empty node list (first run after a lost store.json) looks for its nodes.
+  try {
+    const st = await readStore();
+    if (st.wallet?.address && st.nodes.length === 0) autoDiscover('start-up with an empty node list');
+  } catch (err) {
+    log.warn('start-up node discovery check failed', { err: String(err) });
   }
   try {
     startPoller();

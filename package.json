@@ -1,12 +1,12 @@
 {
   "name": "sentinel-node-manager-solana",
-  "version": "0.3.1-rc.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Sentinel Node Manager (Solana devnet) — desktop app for deploying and managing Sentinel dVPN nodes on the Solana program",
   "main": "out/main/index.cjs",
   "author": "Sentinel Node Manager",
   "homepage": "https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "scripts": {
     "predev": "electron-builder install-app-deps || true",
     "dev": "electron-vite dev",

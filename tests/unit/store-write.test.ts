@@ -9,6 +9,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 
 const DIR = mkdtempSync(path.join(os.tmpdir(), 'snm-store-'));
 vi.mock('electron', () => ({ app: { getPath: () => DIR } }));
+vi.mock('../../src/main/services/logger', () => ({ log: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 
 const { readStore, writeStore } = await import('../../src/main/services/store');
 

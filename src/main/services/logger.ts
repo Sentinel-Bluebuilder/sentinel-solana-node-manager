@@ -53,6 +53,28 @@ const redactFormat = winston.format((info) => {
   return info;
 });
 
+/**
+ * JSON for a log line that can never throw (NM032 rc5: app.log went silent mid-run). A throw inside
+ * a winston format breaks the logger's stream for good, and every later line is lost without a
+ * trace. BigInt (chain amounts) becomes a string, a repeated object '[circular]', and anything else
+ * that still fails is reported in the line instead of thrown.
+ */
+export function safeJson(value: unknown): string {
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_k, v: unknown) => {
+      if (typeof v === 'bigint') return v.toString();
+      if (v && typeof v === 'object') {
+        if (seen.has(v)) return '[circular]';
+        seen.add(v);
+      }
+      return v;
+    });
+  } catch (err) {
+    return JSON.stringify({ logMetaUnserializable: (err as Error).message });
+  }
+}
+
 function build(): winston.Logger {
   ensureDir();
   const fmt = winston.format.combine(
@@ -63,7 +85,7 @@ function build(): winston.Logger {
     winston.format.printf((info) => {
       const level = info.level.padEnd(5);
       const meta = Object.keys(info).filter((k) => !['level', 'message', 'timestamp', 'stack'].includes(k));
-      const metaStr = meta.length ? ' ' + JSON.stringify(Object.fromEntries(meta.map((k) => [k, (info as Record<string, unknown>)[k]]))) : '';
+      const metaStr = meta.length ? ' ' + safeJson(Object.fromEntries(meta.map((k) => [k, (info as Record<string, unknown>)[k]]))) : '';
       const stack = info.stack ? '\n' + String(info.stack) : '';
       return `[${info.timestamp}] ${level} ${info.message}${metaStr}${stack}`;
     }),

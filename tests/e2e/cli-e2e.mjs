@@ -38,7 +38,7 @@
  *   node tests/e2e/cli-e2e.mjs --protocols wireguard,xray   # subset for P7
  *   node tests/e2e/cli-e2e.mjs --keep              # skip P12 (leave the node running)
  *
- * Env: TEST_KEYFILE (path to a devnet keypair file)
+ * Env: TEST_KEYFILE (default Desktop/sentinel-solana/keys/devnet/client.json)
  *      DEVNET_RPC   verification RPC (default HELIUS_RPC_URL when set, else https://api.devnet.solana.com)
  *      HELIUS_RPC_URL  the app's dedicated RPC (any keyed devnet RPC URL); overrides --rpc-env.
  *                   Only its host is ever printed.

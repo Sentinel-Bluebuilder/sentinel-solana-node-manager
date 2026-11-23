@@ -3,7 +3,7 @@
  *
  * Speaks newline-delimited JSON over a Windows named pipe
  * (`\\.\pipe\sentinel-node-manager-<userid>`) or a unix domain socket
- * (`~/.sentinel-node-manager/cli.sock`). Single-active-client lock model: at most
+ * (`~/.sentinel-node-manager-solana/cli.sock`). Single-active-client lock model: at most
  * one client (the in-app prompt OR a PowerShell session OR an AI agent)
  * can execute commands at a time. Other parties become read-only watchers
  * via the in-app stream view.

@@ -1,8 +1,32 @@
 # Changelog
 
-The earlier Cosmos-era app is a separate project and is not part of this repository.
+History of the Cosmos-era app lives in `Desktop/node-deployer-experimental`.
 
-## 0.3.1-rc.1 — HNS for users, no Docker needed to withdraw (release candidate, 2026-11-13)
+## 0.3.2 — Recover nodes; the node list can no longer be wiped (release candidate, private)
+
+- **Lost node list comes back by itself:** after an empty start (a lost or damaged `store.json`), the app
+  reads your wallet's funding history and lists the nodes it funded, view only, with no Docker needed.
+  Funded keys that never opened a node (cancelled deploys) are not shown. Runs at start-up when the list
+  is empty, after a wallet import, and from **Recover nodes** (with a "?" explainer beside it).
+- **Reconnect servers:** one window, one login (password or SSH key file) tried on every selected
+  server. For each server the app reads the node keys and settings already there, checks each node on
+  chain and puts it back in the list with full control (restart, prices, protocol, withdraw, removal).
+  Nothing on the server is changed or deleted. Each server shows Reconnected / Wrong login / Not
+  answering / Server key changed / No node found; servers with another login are retried on their own.
+- **Remember logins (opt-in, on by default):** logins are encrypted by the operating system's keychain
+  and used again after a restart. Settings → Saved server logins lists them (never the secret) with Forget.
+- **The list can't be wiped again:** every save is flushed to disk before it replaces the file, a rolling
+  `store.json.bak` is kept (never a copy of a damaged file), a missing store is restored from it, and every
+  store problem is written to app.log (it used to go to the console only).
+- Recovered nodes keep their key as an encrypted key-file backup; asking for a recovery phrase says
+  plainly that such a node has a key file, not a phrase.
+- **Weak PCs without graphics acceleration** (virtual machines, some remote desktops): the app turns
+  off its blur effects and endless animations there. They kept both CPU cores busy, so a deploy or a
+  server login could time out over SSH while the window was open.
+- Logs: "remote host cleanup pending" and "chain command waits for Reconnect" warn once per hour per
+  node instead of on every poll.
+
+## 0.3.1-rc.1 — HNS for users, no Docker needed to withdraw (release candidate, private)
 
 - **HNS Resolver works for the node's users:** with the switch on, a client connected over WireGuard,
   AmneziaWG or OpenVPN can open Handshake names (whatever DNS server it asked, port 53 goes to the
@@ -70,11 +94,6 @@ The earlier Cosmos-era app is a separate project and is not part of this reposit
 - Windows uninstall removes the setup copy it kept in `%LOCALAPPDATA%` and the empty install folder
   (the wallet and settings stay).
 
-## 0.2.0 RC1 (2026-11-08)
-
-- Release candidate built against fork cut `fork-cb33-4-final6.1` (`02b22fc`); no RC2 build exists for this product.
-- Private-network RPC addresses are accepted over http; local privileged steps and shared-firewall handling added.
-- Release assets: node daemon and CLI binaries (Linux x86_64 and arm64) with `SHA256SUMS`.
 ## 0.2.0 — Solana devnet
 
 - Wallet: Solana keypair (24-word phrase, Phantom-compatible path m/44'/501'/0'/0'),

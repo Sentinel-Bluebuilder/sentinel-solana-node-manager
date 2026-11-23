@@ -1,7 +1,20 @@
 import { app } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { AppEvent, DeployedNode, WalletState } from '../../shared/types';
+import type { AppEvent, DeployedNode, DiscoveredNodeView, WalletState } from '../../shared/types';
+import { log } from './logger';
+
+// NM032: 0.3.0 reported store problems on stderr only, so a user's app.log showed nothing
+// when his whole node list was lost. Every store problem now lands in app.log as well.
+function storeProblem(message: string, err?: unknown): void {
+  const detail = err === undefined ? '' : `: ${(err as Error)?.message ?? String(err)}`;
+  process.stderr.write(`${message}${detail}\n`);
+  try {
+    log.warn(message, err === undefined ? undefined : { err: (err as Error)?.message ?? String(err) });
+  } catch (logErr) {
+    process.stderr.write(`store: could not write app.log: ${(logErr as Error).message}\n`);
+  }
+}
 
 /**
  * Minimal on-disk JSON store.
@@ -12,7 +25,8 @@ import type { AppEvent, DeployedNode, WalletState } from '../../shared/types';
  *   - Per-node operator mnemonics live on the node itself (in its own
  *     keyring). If the user opts to back one up in the app, it ends up in
  *     store.nodeBackups, also encrypted by safeStorage.
- *   - SSH credentials are never persisted.
+ *   - SSH credentials are persisted only when the user ticks "Remember logins" (0.3.2),
+ *     and then only as safeStorage blobs in store.sshVault (see ssh-vault.ts).
  *
  * Everything else is fine to keep in plain JSON.
  */
@@ -45,7 +59,14 @@ interface StoreShape {
    * (fix G). They cannot run while Docker is down; the poller deletes them once it is up.
    */
   staleLocalContainers?: Array<{ nodeId: string; runtimeId?: string; at: string }>;
+  /** NM032: server logins the user chose to remember, `host:port` → safeStorage blob (ssh-vault.ts). */
+  sshVault?: Record<string, string>;
+  /** NM032: nodes this wallet funded that the list does not hold (recovery.ts), shown view-only. */
+  discoveredNodes?: DiscoveredNode[];
 }
+
+/** A node found from the wallet's own funding transactions, not (yet) managed by this app. */
+export type DiscoveredNode = DiscoveredNodeView;
 
 const DEFAULT_STORE: StoreShape = {
   wallet: null,
@@ -75,8 +96,22 @@ async function loadOrRecover(): Promise<StoreShape> {
   if (cached) return cached;
   try {
     cached = await loadStoreFile(storePath());
+    log.info('store loaded', { nodes: cached.nodes.length, wallet: cached.wallet ? 'set' : 'none', events: cached.events.length });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // A missing file is normal on first run; a missing file beside a backup is not.
+      const bakExists = await fs.stat(backupPath()).then(() => true, () => false);
+      if (bakExists) {
+        try {
+          cached = await loadStoreFile(backupPath());
+          storeProblem(`store.json missing; restored ${cached.nodes.length} node(s) from store.json.bak`);
+          return cached;
+        } catch (bakErr) {
+          storeProblem('store.json missing and store.json.bak unusable; starting empty', bakErr);
+        }
+      } else {
+        log.info('store.json not found; starting with an empty store (first run)');
+      }
       cached = structuredClone(DEFAULT_STORE);
       return cached;
     }
@@ -87,19 +122,17 @@ async function loadOrRecover(): Promise<StoreShape> {
     const kept = `${target}.damaged-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     const keptOk = await fs.copyFile(target, kept).then(
       () => true,
-      (e: unknown) => (process.stderr.write(`could not keep the damaged store.json aside: ${(e as Error).message}\n`), false),
+      (e: unknown) => (storeProblem('could not keep the damaged store.json aside', e), false),
     );
     let restored = false;
     try {
       cached = await loadStoreFile(backupPath());
       restored = true;
     } catch (bakErr) {
-      process.stderr.write(`store.json backup unusable: ${(bakErr as Error).message}\n`);
+      storeProblem('store.json backup unusable', bakErr);
       cached = structuredClone(DEFAULT_STORE);
     }
-    // The file on disk is the damaged one: the first save must not copy it over the backup.
-    skipNextBackup = true;
-    process.stderr.write(`store.json unreadable (${(err as Error).message}); ${restored ? 'restored the backup' : 'starting empty'}\n`);
+    storeProblem(`store.json unreadable; ${restored ? `restored ${cached.nodes.length} node(s) from the backup` : 'starting empty'}`, err);
     cached.events = [
       {
         id: `store-recovered-${Date.now()}`,
@@ -130,6 +163,8 @@ async function loadStoreFile(file: string): Promise<StoreShape> {
     retiredNodeOwners: parsed.retiredNodeOwners ?? {},
     watchedNodes: parsed.watchedNodes ?? [],
     staleLocalContainers: parsed.staleLocalContainers ?? [],
+    sshVault: parsed.sshVault ?? {},
+    discoveredNodes: parsed.discoveredNodes ?? [],
   };
 }
 
@@ -137,11 +172,27 @@ function backupPath(): string {
   return `${storePath()}.bak`;
 }
 
-// Rolling backup: before a save replaces store.json, the previous copy goes to store.json.bak
-// at most every 5 minutes (and on the first save of a session).
+// Backup (Q0596): after a save, the SAVED state is also written to store.json.bak, durably, as a
+// second copy. It is refreshed at once when something that matters changes (a node added or
+// removed, a key backup, prices, protocol, removal progress, the wallet, a saved login) and at
+// most every 5 minutes otherwise: status polls save often. It used to copy the previous file only
+// every 5 minutes, so a restore could bring back prices from before a change, or miss a node
+// deployed minutes earlier together with its key.
+// One guard: a save with no nodes never replaces a backup that still has some (the reporter's
+// list was lost to an empty list saved over the good one).
 const BACKUP_EVERY_MS = 5 * 60_000;
 let lastBackupAt = 0;
-let skipNextBackup = false;
+let lastBackupSig = '';
+
+/** What a backup must never lag behind. Volatile status (online, stats, timestamps) is left out. */
+export function backupSignature(s: StoreShape): string {
+  return JSON.stringify([
+    s.wallet?.address ?? null,
+    s.nodes.map((n) => [n.id, n.operatorAddress, n.nodePda, n.gigabytePriceDVPN, n.hourlyPriceDVPN, n.serviceType, n.removalStage ?? null]),
+    Object.keys(s.nodeBackups ?? {}).sort(),
+    Object.keys(s.sshVault ?? {}).sort(),
+  ]);
+}
 
 // Writes run one at a time (Q0408). Two saves in the same millisecond used to share one
 // temp name (pid + Date.now()): one rename failed ENOENT, and two writers could interleave
@@ -154,9 +205,37 @@ export function writeStore(next: StoreShape): Promise<void> {
   const run = writeChain.then(() => persist(next));
   // Keep the chain alive after a failed write; the caller still gets the error from `run`.
   writeChain = run.catch((err: unknown) => {
-    process.stderr.write(`store.json write failed: ${(err as Error).message}\n`);
+    storeProblem('store.json write failed', err);
   });
   return run;
+}
+
+// NM032: the rename alone is only atomic for the directory entry. Without a flush, a power cut
+// or forced restart right after it can leave store.json pointing at blocks never written (an
+// empty or zero-filled file), which 0.3.0 then read as "no nodes". Flush the data first.
+async function writeDurable(file: string, data: string): Promise<void> {
+  const fh = await fs.open(file, 'w', 0o600);
+  try {
+    await fh.writeFile(data, 'utf8');
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
+}
+
+// Flush the directory entry after the rename where the OS allows it (POSIX). Windows cannot
+// open a directory for flushing; NTFS journals the rename itself, so that case is expected.
+async function syncDir(dir: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  let fh: Awaited<ReturnType<typeof fs.open>> | null = null;
+  try {
+    fh = await fs.open(dir, 'r');
+    await fh.sync();
+  } catch (err) {
+    log.debug('store dir flush skipped', { err: (err as Error).message });
+  } finally {
+    await fh?.close().catch((e: unknown) => log.debug('store dir handle close failed', { err: (e as Error).message }));
+  }
 }
 
 async function persist(next: StoreShape): Promise<void> {
@@ -168,22 +247,52 @@ async function persist(next: StoreShape): Promise<void> {
   // previous good copy stays intact until the rename completes.
   writeSeq += 1;
   const tmp = `${target}.${process.pid}.${Date.now()}.${writeSeq}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(next, null, 2), 'utf8');
-  if (skipNextBackup) {
-    skipNextBackup = false;
-    lastBackupAt = Date.now();
-  } else if (Date.now() - lastBackupAt >= BACKUP_EVERY_MS) {
-    lastBackupAt = Date.now();
-    await fs.copyFile(target, backupPath()).catch((err: unknown) => {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') process.stderr.write(`store.json backup failed: ${(err as Error).message}\n`);
-    });
+  try {
+    await writeDurable(tmp, JSON.stringify(next, null, 2));
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch((rmErr: unknown) => storeProblem(`store temp cleanup failed (${tmp})`, rmErr));
+    throw err;
   }
   try {
     await fs.rename(tmp, target);
   } catch (err) {
-    await fs.rm(tmp, { force: true }).catch((rmErr: unknown) => {
-      process.stderr.write(`store temp cleanup failed (${tmp}): ${(rmErr as Error).message}\n`);
-    });
+    await fs.rm(tmp, { force: true }).catch((rmErr: unknown) => storeProblem(`store temp cleanup failed (${tmp})`, rmErr));
     throw err;
+  }
+  await syncDir(dir);
+  const sig = backupSignature(next);
+  if (sig !== lastBackupSig || Date.now() - lastBackupAt >= BACKUP_EVERY_MS) {
+    if (await writeBackup(next)) {
+      lastBackupSig = sig;
+      lastBackupAt = Date.now();
+    }
+  }
+}
+
+// The backup is written from the state just saved (valid by construction), never by copying the
+// file on disk, so a store.json damaged since the last save can never reach the backup.
+/** Write the saved state to store.json.bak (durable, via a temp file). False when skipped or failed. */
+async function writeBackup(next: StoreShape): Promise<boolean> {
+  if (next.nodes.length === 0) {
+    let bakNodes = 0;
+    try {
+      bakNodes = ((JSON.parse(await fs.readFile(backupPath(), 'utf8')) as { nodes?: unknown[] }).nodes ?? []).length;
+    } catch (err) {
+      log.debug('store backup: no readable backup to compare with', { err: (err as Error).message });
+    }
+    if (bakNodes > 0) {
+      log.info('store backup kept: this save has no nodes, the backup has some', { backupNodes: bakNodes });
+      return false;
+    }
+  }
+  const bakTmp = `${backupPath()}.${process.pid}.${writeSeq}.tmp`;
+  try {
+    await writeDurable(bakTmp, JSON.stringify(next, null, 2));
+    await fs.rename(bakTmp, backupPath());
+    return true;
+  } catch (err) {
+    storeProblem('store.json backup failed', err);
+    await fs.rm(bakTmp, { force: true }).catch((rmErr: unknown) => storeProblem(`store backup temp cleanup failed (${bakTmp})`, rmErr));
+    return false;
   }
 }

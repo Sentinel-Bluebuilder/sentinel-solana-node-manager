@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildFailureSummary, httpRpcHostAllowed, isPublicIPv4, localSudoMissingError, privilegedFallbackApplies, rpcHostOf, rpcIsLocalOnly } from '../../src/main/services/validate';
 
 /**
- * FINAL check 2026-11-08 on a Linux test host: a local deploy failed with "EACCES: permission denied,
+ * FINAL check 2026-11-08 on ctl-1: a local deploy failed with "EACCES: permission denied,
  * scandir …/nodes/<id>/amneziawg". The node container runs as root, so with rootful Docker on
  * Linux the node home fills with root-owned files, and plain fs calls from a non-root app fail.
  * Local mode now retries exactly those failures through `sudo -n`, as remote mode does.
@@ -29,16 +29,16 @@ describe('local node home: when to retry through sudo', () => {
   });
 });
 
-/** The fleet's RPC gate lives on a VPC address (10.0.0.5); plain http stays banned for public hosts. */
+/** The fleet's RPC gate lives on a VPC address (10.128.0.26); plain http stays banned for public hosts. */
 describe('plain http RPC hosts', () => {
   it('allows loopback and private IPv4 ranges', () => {
-    for (const h of ['localhost', '127.0.0.1', '::1', '[::1]', '10.0.0.5', '172.16.0.1', '172.31.255.254', '192.168.1.10']) {
+    for (const h of ['localhost', '127.0.0.1', '::1', '[::1]', '10.128.0.26', '172.16.0.1', '172.31.255.254', '192.168.1.10']) {
       expect(httpRpcHostAllowed(h)).toBe(true);
     }
   });
 
   it('refuses public addresses, edge ranges and hostnames', () => {
-    for (const h of ['9.9.9.9', '172.15.0.1', '172.32.0.1', '192.169.0.1', '8.8.8.8', 'devnet.helius-rpc.com', 'gate.internal', '10.0.0.256']) {
+    for (const h of ['34.123.218.148', '172.15.0.1', '172.32.0.1', '192.169.0.1', '8.8.8.8', 'devnet.helius-rpc.com', 'gate.internal', '10.0.0.256']) {
       expect(httpRpcHostAllowed(h)).toBe(false);
     }
   });
@@ -47,11 +47,11 @@ describe('plain http RPC hosts', () => {
 /** The final client refuses non-public node addresses, so a local deploy publishes the public IP. */
 describe('public IPv4', () => {
   it('accepts internet-routable addresses', () => {
-    for (const ip of ['9.9.9.9', '8.8.8.8', '1.1.1.1', '172.32.0.1', '100.128.0.1']) expect(isPublicIPv4(ip)).toBe(true);
+    for (const ip of ['34.123.218.148', '8.8.8.8', '1.1.1.1', '172.32.0.1', '100.128.0.1']) expect(isPublicIPv4(ip)).toBe(true);
   });
 
   it('refuses private, shared, link-local, test and reserved ranges', () => {
-    for (const ip of ['10.0.0.5', '192.168.1.5', '172.20.0.1', '127.0.0.1', '100.64.1.1', '169.254.1.1', '192.0.2.1', '198.51.100.7', '203.0.113.9', '198.18.0.1', '0.0.0.0', '224.0.0.1', '300.1.1.1', 'node.example.com']) {
+    for (const ip of ['10.128.0.26', '192.168.1.5', '172.20.0.1', '127.0.0.1', '100.64.1.1', '169.254.1.1', '192.0.2.1', '198.51.100.7', '203.0.113.9', '198.18.0.1', '0.0.0.0', '224.0.0.1', '300.1.1.1', 'node.example.com']) {
       expect(isPublicIPv4(ip)).toBe(false);
     }
   });
@@ -60,12 +60,12 @@ describe('public IPv4', () => {
 /** A node or client on a VPS cannot reach this machine's loopback or VPC gateway (FINAL check 2026-11-08). */
 describe('RPC reachable from a remote host', () => {
   it('flags loopback and private-network RPC URLs as local-only', () => {
-    for (const u of ['http://127.0.0.1:8899/c/tok', 'http://10.0.0.5:8899/c/tok', 'https://192.168.1.2', 'http://localhost:8899']) expect(rpcIsLocalOnly(u)).toBe(true);
-    for (const u of ['https://api.devnet.solana.com', 'https://devnet.helius-rpc.com/?api-key=x', 'https://9.9.9.9:8899']) expect(rpcIsLocalOnly(u)).toBe(false);
+    for (const u of ['http://127.0.0.1:8899/c/tok', 'http://10.128.0.26:8899/c/tok', 'https://192.168.1.2', 'http://localhost:8899']) expect(rpcIsLocalOnly(u)).toBe(true);
+    for (const u of ['https://api.devnet.solana.com', 'https://devnet.helius-rpc.com/?api-key=x', 'https://34.123.218.148:8899']) expect(rpcIsLocalOnly(u)).toBe(false);
   });
 
   it('messages show the host only, never a token or key', () => {
-    expect(rpcHostOf('http://10.0.0.5:8899/c/secret-token')).toBe('10.0.0.5:8899');
+    expect(rpcHostOf('http://10.128.0.26:8899/c/secret-token')).toBe('10.128.0.26:8899');
     expect(rpcHostOf('https://devnet.helius-rpc.com/?api-key=secret')).toBe('devnet.helius-rpc.com');
   });
 });

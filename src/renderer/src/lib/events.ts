@@ -51,6 +51,7 @@ export const KIND_TONE: Record<EventKind, 'ok' | 'err' | 'warn' | 'accent'> = {
   'node-test-passed': 'ok',
   'node-test-failed': 'err',
   'store-recovered': 'err',
+  'nodes-recovered': 'ok',
 };
 
 const KIND_ICON_MAP: Record<EventKind, ComponentType<IconProps>> = {
@@ -83,6 +84,7 @@ const KIND_ICON_MAP: Record<EventKind, ComponentType<IconProps>> = {
   'node-test-passed': CheckCircle,
   'node-test-failed': WarningCircle,
   'store-recovered': WarningCircle,
+  'nodes-recovered': Plugs,
 };
 
 export const KIND_ICON: Record<EventKind, ComponentType<IconProps>> = new Proxy(KIND_ICON_MAP, {

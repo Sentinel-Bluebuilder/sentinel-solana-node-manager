@@ -4,7 +4,9 @@ import { MIcon } from '../components/MIcon';
 import { CountryFlag } from '../components/CountryFlag';
 import { useApp } from '../store/app';
 import { fmtDVPN, relativeTime } from '../lib/format';
-import type { NodeStatus, VpnServiceType, NodeDeployTarget } from '../../../shared/types';
+import { ReconnectServersModal } from '../components/ReconnectServersModal';
+import { RecoverNodesHelp } from '../components/RecoverNodesHelp';
+import type { DiscoveredNodeView, NodeStatus, RecoveryServerView, VpnServiceType, NodeDeployTarget } from '../../../shared/types';
 
 type TargetFilter = 'all' | NodeDeployTarget;
 type ProtocolFilter = 'all' | VpnServiceType;
@@ -49,6 +51,47 @@ export function Nodes() {
   const [targetFilter, setTargetFilter] = useState<TargetFilter>('all');
   const [protocolFilter, setProtocolFilter] = useState<ProtocolFilter>('all');
   const [bulkRunning, setBulkRunning] = useState<'start' | 'stop' | 'claim' | null>(null);
+
+  // ─── NM032: nodes found from the wallet + servers waiting for a login ───
+  const [discovered, setDiscovered] = useState<DiscoveredNodeView[]>([]);
+  const [servers, setServers] = useState<RecoveryServerView[]>([]);
+  const [reconnectOpen, setReconnectOpen] = useState(false);
+  const [reconnectHost, setReconnectHost] = useState<string | undefined>(undefined);
+  const [scanning, setScanning] = useState(false);
+  const loadRecovery = async () => {
+    try {
+      const [d, s] = await Promise.all([window.api.nodes.discovered(), window.api.nodes.recoveryServers()]);
+      setDiscovered(d);
+      setServers(s);
+    } catch (err) {
+      console.warn('recovery state unavailable', err);
+    }
+  };
+  useEffect(() => {
+    void loadRecovery();
+  }, [nodes]);
+  const waitingListed = servers.reduce((n, s) => n + (s.connected ? 0 : s.listedWaiting), 0);
+  const serversToReconnect = servers.filter((s) => !s.connected && (s.listedWaiting > 0 || s.discovered > 0)).length || servers.filter((s) => !s.connected).length;
+  const openReconnect = (host?: string) => {
+    setReconnectHost(host);
+    setReconnectOpen(true);
+  };
+  const findMyNodes = async () => {
+    setScanning(true);
+    try {
+      const r = await window.api.nodes.discover();
+      await loadRecovery();
+      pushToast({
+        tone: r.found.length ? 'success' : 'info',
+        title: r.found.length ? `Found ${r.found.length} node${r.found.length === 1 ? '' : 's'} from your wallet` : 'No missing nodes found',
+        body: `Checked ${r.scannedTxs} wallet transactions${r.alreadyManaged ? ` · ${r.alreadyManaged} already listed` : ''}${r.fundedOnly ? ` · ${r.fundedOnly} cancelled deploy${r.fundedOnly === 1 ? '' : 's'} skipped` : ''}.`,
+      });
+    } catch (err) {
+      pushToast({ tone: 'error', title: 'Could not search for your nodes', body: (err as Error).message });
+    } finally {
+      setScanning(false);
+    }
+  };
 
   // Withdrawable = tDVPN already on the node key + revenue still held on chain
   // (withdraw moves the revenue to the key first). Revenue comes from the live status.
@@ -252,9 +295,9 @@ export function Nodes() {
       <PageHeader
         title="Nodes"
         subtitle={
-          nodes.length === 0
+          nodes.length === 0 && discovered.length === 0
             ? 'No nodes deployed yet'
-            : `${counts.local} local · ${counts.ssh} SSH · ${nodes.length} total`
+            : `${counts.local} local · ${counts.ssh} SSH · ${nodes.length} total${discovered.length ? ` · ${discovered.length} found from your wallet (view only)` : ''}`
         }
         right={
           <>
@@ -308,6 +351,18 @@ export function Nodes() {
                 Clear stuck ({stuckCount})
               </button>
             ) : null}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => void findMyNodes()}
+                disabled={scanning || bulkRunning !== null}
+                title="Search your wallet's history for nodes it funded that this list is missing."
+              >
+                <MIcon name={scanning ? 'hourglass_top' : 'restore'} size={14} />
+                {scanning ? 'Searching…' : 'Recover nodes'}
+              </button>
+              <RecoverNodesHelp align="right" />
+            </span>
             <button
               className="btn btn-secondary"
               onClick={() => {
@@ -323,7 +378,49 @@ export function Nodes() {
         }
       />
 
-      {nodes.length === 0 ? (
+      {discovered.length > 0 || waitingListed > 0 ? (
+        <section
+          aria-label="Nodes to reconnect"
+          className="flex items-center gap-4 flex-wrap"
+          style={{
+            padding: '16px 18px',
+            borderRadius: 'var(--radius)',
+            border: '1px solid color-mix(in srgb, var(--accent) 45%, transparent)',
+            background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+          }}
+        >
+          <MIcon name="history" size={32} />
+          <div className="flex flex-col gap-1" style={{ flex: '1 1 320px', minWidth: 0 }}>
+            <span className="font-semibold" style={{ color: 'var(--text)', fontSize: 15 }}>
+              {discovered.length > 0
+                ? `${discovered.length} node${discovered.length === 1 ? '' : 's'} restored from your wallet`
+                : `${waitingListed} node${waitingListed === 1 ? '' : 's'} need${waitingListed === 1 ? 's' : ''} their server login`}
+            </span>
+            <span className="text-[13px]" style={{ color: 'var(--text-dim)', lineHeight: 1.45 }}>
+              {discovered.length > 0
+                ? 'Found on chain from your wallet. You can see them now. To restart, change prices or remove a node, reconnect its server once.'
+                : 'To restart, change prices or remove these nodes, reconnect their servers.'}
+            </span>
+          </div>
+          <button className="btn btn-primary" onClick={() => openReconnect()} style={{ height: 40, padding: '0 18px' }}>
+            <MIcon name="link" size={16} />
+            Reconnect servers{serversToReconnect ? ` (${serversToReconnect})` : ''}
+          </button>
+        </section>
+      ) : null}
+
+      <ReconnectServersModal
+        open={reconnectOpen}
+        servers={servers}
+        initialHost={reconnectHost}
+        onClose={() => setReconnectOpen(false)}
+        onFinished={() => {
+          void refreshNodes();
+          void loadRecovery();
+        }}
+      />
+
+      {nodes.length === 0 && discovered.length === 0 ? (
         <div className="card">
           <div className="card-body">
             <div
@@ -391,6 +488,19 @@ export function Nodes() {
                   <MIcon name="grid_view" size={16} />
                   Batch deploy
                 </button>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => void findMyNodes()}
+                    disabled={scanning}
+                    style={{ fontSize: 14, padding: '10px 18px', height: 'auto' }}
+                    title="Already had nodes? Search your wallet's history for them."
+                  >
+                    <MIcon name={scanning ? 'hourglass_top' : 'restore'} size={16} />
+                    {scanning ? 'Searching…' : 'Recover nodes'}
+                  </button>
+                  <RecoverNodesHelp align="center" />
+                </span>
               </div>
             </div>
           </div>
@@ -400,7 +510,7 @@ export function Nodes() {
           <div className="card-header flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className="card-title">All nodes</div>
-              <span className="mono-tag">{filtered.length} shown</span>
+              <span className="mono-tag">{filtered.length + discovered.length} shown</span>
             </div>
             <div className="flex items-center gap-2">
               <FilterGroup
@@ -429,7 +539,7 @@ export function Nodes() {
               />
             </div>
           </div>
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && discovered.length === 0 ? (
             <div className="card-body">
               <div className="empty-state">
                 <MIcon name="filter_alt" size={24} />
@@ -540,6 +650,53 @@ export function Nodes() {
                       </tr>
                     );
                   })}
+                  {discovered.map((d) => (
+                    <tr key={`found-${d.operatorAddress}`}>
+                      <td style={{ color: 'var(--text)', fontWeight: 500, textAlign: 'left', maxWidth: 200 }}>
+                        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+                          <MIcon name="dns" size={16} />
+                          <span className="truncate" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.moniker}>
+                            {d.moniker}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'left' }}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="chip chip-success">
+                            <MIcon name="cloud" size={12} />
+                            SSH
+                          </span>
+                          <span className="mono-inline text-[11px]" style={{ color: 'var(--text-dim)' }}>
+                            {d.host ?? 'server not known yet'}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'left' }}>
+                        {d.unverified ? (
+                          <span
+                            className="chip chip-warn"
+                            title={`Could not read this node on chain (the network was busy). Click Recover nodes to check again. Node key ${d.operatorAddress}`}
+                          >
+                            Not verified
+                          </span>
+                        ) : (
+                          <span className={`chip ${d.chainStatus === 0 ? 'chip-muted' : 'chip-accent'}`} title={d.nodePda ? `Node account ${d.nodePda}` : `Node key ${d.operatorAddress}`}>
+                            {d.chainStatus === 1 ? 'Listed on chain' : d.chainStatus === 0 ? 'Delisted' : 'On chain'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="uppercase text-[10px] tracking-wider" style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                        —
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <span className="chip chip-warn" title="Found from your wallet. Reconnect its server to manage it.">View only</span>{' '}
+                        <button className="btn btn-ghost" style={{ height: 26, padding: '0 8px', fontSize: 12 }} onClick={() => openReconnect(d.host)}>
+                          Reconnect
+                        </button>
+                      </td>
+                      <td style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{relativeTime(d.fundedAt)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

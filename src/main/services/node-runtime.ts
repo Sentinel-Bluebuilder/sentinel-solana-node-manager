@@ -103,6 +103,8 @@ export interface NodeRuntime {
   isRunning(): Promise<boolean>;
   /** Bridge IP of the node container (for same-host test clients). */
   containerIp(): Promise<string | undefined>;
+  /** Image the node container was created from (NM032: adopting a node found on its host). */
+  containerImage(): Promise<string | undefined>;
   logs(tail: number): Promise<string[]>;
   /** Ports from `ports` already in use on the host. */
   busyPorts(ports: number[]): Promise<number[]>;
@@ -256,6 +258,17 @@ class LocalRuntime implements NodeRuntime {
     const info = await withDockerTimeout(() => c.getContainer(this.ref).inspect(), 10_000, 'inspect');
     const nets = Object.values(info.NetworkSettings?.Networks ?? {});
     return nets.map((n) => n.IPAddress).find(Boolean);
+  }
+
+  async containerImage(): Promise<string | undefined> {
+    const c = await getClient();
+    try {
+      const info = await withDockerTimeout(() => c.getContainer(this.ref).inspect(), 10_000, 'inspect');
+      return info.Config?.Image || undefined;
+    } catch (err) {
+      log.debug('containerImage: no container', { ref: this.ref, err: (err as Error).message });
+      return undefined;
+    }
   }
 
   async busyPorts(ports: number[]): Promise<number[]> {
@@ -586,6 +599,12 @@ class RemoteRuntime implements NodeRuntime {
   async containerIp(): Promise<string | undefined> {
     const r = await this.sh(this.docker(['inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', containerName(this.nodeId)]), 30_000);
     return r.output.trim().split(/\s+/).find((x) => /^\d+\.\d+\.\d+\.\d+$/.test(x));
+  }
+
+  async containerImage(): Promise<string | undefined> {
+    const r = await this.sh(`${this.docker(['inspect', '-f', '{{.Config.Image}}', containerName(this.nodeId)])} 2>/dev/null || true`, 30_000);
+    const img = r.stdout.trim();
+    return /^[A-Za-z0-9._/:@-]{1,200}$/.test(img) ? img : undefined;
   }
 
   async logs(tail: number): Promise<string[]> {

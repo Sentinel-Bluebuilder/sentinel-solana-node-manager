@@ -46,7 +46,7 @@ describe('dvpnctl output', () => {
       slot: 1,
       value: {
         nodeId: [161, 178, 195, 212, ...Array(26).fill(0), 190, 239],
-        owner: '11111111111111111111111111111111',
+        owner: '9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj',
         status: 1,
         listedAt: 1791949626,
         channelPricePerGb: 1000,
@@ -60,7 +60,7 @@ describe('dvpnctl output', () => {
         bond: 1000000,
         revenue: 197,
         feesAccrued: 3,
-        rentPayer: '11111111111111111111111111111111',
+        rentPayer: '9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj',
         openedAt: 1791204408,
       },
     };
@@ -72,10 +72,10 @@ describe('dvpnctl output', () => {
   });
 
   it('derives the node PDA from [node, owner, node_id]', () => {
-    // Re-derived from the placeholder owner + id (checked against web3.js findProgramAddressSync).
+    // The live node above: its PDA must re-derive from its own owner + id.
     const id = 'a1b2c3d4' + '00'.repeat(26) + 'beef';
-    expect(nodePda('11111111111111111111111111111111', id)).toBe('4d7F5smMhB84mxjNFn9NqGfjaDimkLncrzSmSis5UKoj');
-    expect(nodeUnbondingPda('11111111111111111111111111111111', id)).not.toBe(nodePda('11111111111111111111111111111111', id));
+    expect(nodePda('9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj', id)).toBe('2xbdF1vEapF2Gui6qNaSMLXKpupfkWgaGVotzJQtTqKq');
+    expect(nodeUnbondingPda('9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj', id)).not.toBe(nodePda('9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj', id));
   });
 });
 

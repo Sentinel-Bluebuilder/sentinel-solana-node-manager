@@ -89,3 +89,17 @@ export async function forgetHostKey(host: string, port: number): Promise<void> {
   delete map[`${host}:${port}`];
   await save();
 }
+
+/**
+ * NM032: every server this app has ever logged in to (host:port → when last seen). After a lost
+ * node list this is the user's server list: the Reconnect window offers these hosts.
+ */
+export async function listKnownHosts(): Promise<Array<{ host: string; port: number; lastSeen: string }>> {
+  const map = await load();
+  return Object.entries(map)
+    .map(([k, v]) => {
+      const i = k.lastIndexOf(':');
+      return { host: k.slice(0, i), port: Number(k.slice(i + 1)) || 22, lastSeen: v.lastSeen };
+    })
+    .sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+}

@@ -30,7 +30,7 @@ const KIND_GROUPS: { id: string; label: string; kinds: EventKind[] }[] = [
   {
     id: 'wallet',
     label: 'Wallet',
-    kinds: ['wallet-created', 'wallet-restored', 'wallet-logout', 'balance-refreshed', 'store-recovered'],
+    kinds: ['wallet-created', 'wallet-restored', 'wallet-logout', 'balance-refreshed', 'store-recovered', 'nodes-recovered'],
   },
   {
     id: 'chain',
@@ -79,6 +79,7 @@ const KIND_LABEL: Record<EventKind, string> = {
   'node-test-passed': 'Test session passed',
   'node-test-failed': 'Test session failed',
   'store-recovered': 'App data recovered',
+  'nodes-recovered': 'Nodes recovered',
 };
 
 const TONE_COLOR: Record<'ok' | 'err' | 'warn' | 'accent', string> = {

@@ -14,8 +14,6 @@ program** (devnet), on this machine (Docker Desktop) or on a VPS over SSH.
 
 Latest release: [**Releases**](https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/latest)
 
-Release candidate: [**v0.3.1-rc1**](https://github.com/Sentinel-Bluebuilder/sentinel-solana-node-manager/releases/tag/v0.3.1-rc1) adds the HNS Resolver for node users and chain actions without Docker on this computer (see CHANGELOG). Its files use the same names below with `0.3.1-rc.1` in place of `0.3.0`.
-
 | System | File | Install |
 |---|---|---|
 | Windows 10/11 x64 | `Sentinel-Node-Manager-0.3.0-win-x64-setup.exe` | Run it. One click, no admin prompt; the app opens when setup ends |
@@ -43,10 +41,6 @@ against the hash pinned in the app, and loads it into Docker.
 **Node server files** (also on the release, for running a node without the app): `sentinel-dvpnd-linux-{amd64,arm64}`
 (daemon), `sentinel-dvpn-linux-{amd64,arm64}` (CLI), and the node images
 `sentinel-dvpnd-image-0.3.0-linux-{amd64,arm64}.tar.gz` (`gunzip -c <file> | docker load`).
-
-Test results and known issues:
-[sentinel-solana-dvpn-testing-tools](https://github.com/Sentinel-Bluebuilder/sentinel-solana-dvpn-testing-tools)
-([known issues](https://github.com/Sentinel-Bluebuilder/sentinel-solana-dvpn-testing-tools/blob/main/docs/known-issues-rc1.md)).
 
 ## How it works
 

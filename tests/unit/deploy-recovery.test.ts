@@ -3,7 +3,7 @@ import { SSH_CONNECT_ATTEMPTS, ctlImageChoice, failedDeployVerdict, firstRemoval
 
 /**
  * A remote deploy whose open_node failed in SIMULATION (no transaction) must sweep the
- * funding back and drop the record. Seen on a remote test host (Q0322/Q0323): recovery read
+ * funding back and drop the record. Seen on ddv-c6-remote (Q0322/Q0323): recovery read
  * the node account through dvpnctl on LOCAL Docker, the remote node's image was not
  * there, the read failed, the failure was taken as "opened", and the record was marked
  * on chain and parked in a removal that retried "No such image" forever, with
@@ -53,7 +53,7 @@ describe('firstRemovalStage', () => {
 });
 
 /**
- * a remote test host came back on a new IP; the node record kept the old one and every remote step
+ * ddv-c6-remote came back on a new IP; the node record kept the old one and every remote step
  * failed with a bare "connect ETIMEDOUT". DIR: the app must say clearly what is wrong.
  */
 describe('sshConnectError', () => {

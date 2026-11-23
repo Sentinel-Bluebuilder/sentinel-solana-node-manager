@@ -301,7 +301,7 @@ export function shouldRetryHostCleanup(input: {
  * (10/8, 172.16/12, 192.168/16) where a team runs its own RPC gateway inside a VPC.
  * A public host never: plaintext over the open network leaks signed TXs and queries.
  * Hostnames other than localhost are refused (they could resolve anywhere).
- * Regression (2026-11-08): the fleet's RPC gate on 10.0.0.5 was refused, so the app
+ * Regression (2026-11-08): the fleet's RPC gate on 10.128.0.26 was refused, so the app
  * could only reach Helius with a raw key in its settings.
  */
 export function httpRpcHostAllowed(hostname: string): boolean {
@@ -317,7 +317,7 @@ export function httpRpcHostAllowed(hostname: string): boolean {
 /**
  * The useful part of a failed `docker build --progress=plain` log: the failing step's own output
  * (e.g. "curl: (22) ... 403"), not the Dockerfile echo BuildKit prints last. Falls back to the
- * tail. Regression (2026-11-08, a remote test host): the error ended in the RUN text and hid the cause.
+ * tail. Regression (2026-11-08, ddv-c6-remote): the error ended in the RUN text and hid the cause.
  */
 export function buildFailureSummary(output: string, max = 800): string {
   const lines = output.trim().split(/\r?\n/);
@@ -350,7 +350,7 @@ export function rpcIsLocalOnly(url: string): boolean {
 
 /**
  * Is this a public (internet-routable) IPv4 literal? The final client (fork-cb33-4-final)
- * refuses a node whose address is not public ("address is not public: 10.0.0.5"), so a
+ * refuses a node whose address is not public ("address is not public: 10.128.0.26"), so a
  * local deploy must publish the machine's public IP, not its LAN IP.
  */
 export function isPublicIPv4(ip: string): boolean {
@@ -378,7 +378,7 @@ export function isPublicIPv4(ip: string): boolean {
  * maps ownership) and rootless Docker never hit this, and an app running as root never
  * needs it.
  *
- * Regression (FINAL check 2026-11-08, a Linux test host): deploy failed "EACCES: permission denied,
+ * Regression (FINAL check 2026-11-08, ctl-1): deploy failed "EACCES: permission denied,
  * scandir …/nodes/<id>/amneziawg" because local mode used plain fs calls only.
  */
 export function privilegedFallbackApplies(

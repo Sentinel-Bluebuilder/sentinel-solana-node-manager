@@ -11,6 +11,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const DIR = mkdtempSync(path.join(os.tmpdir(), 'snm-store-rec-'));
 vi.mock('electron', () => ({ app: { getPath: () => DIR } }));
+vi.mock('../../src/main/services/logger', () => ({ log: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 afterAll(() => rmSync(DIR, { recursive: true, force: true }));
 
 const STORE = path.join(DIR, 'store.json');
@@ -73,18 +74,48 @@ describe('store recovery', () => {
     expect((await readStore()).nodes.map((n) => n.id)).toEqual(['n1']);
   });
 
-  it('a missing store is a fresh install: empty, no event, no backup resurrected', async () => {
+  // NM032 changed this rule: a .bak exists only after an earlier save, so a missing store beside one is
+  // lost data (a crash between unlink and rename, a deleted file), not a fresh install.
+  it('a missing store with a backup is restored from the backup (NM032)', async () => {
     writeFileSync(BAK, JSON.stringify(good));
+    const { readStore } = await fresh();
+    expect((await readStore()).nodes.map((n) => n.id)).toEqual(['n1']);
+  });
+
+  it('control: a missing store with no backup is a fresh install: empty, no event', async () => {
     const { readStore } = await fresh();
     const s = await readStore();
     expect(s.nodes).toEqual([]);
     expect(s.events).toEqual([]);
   });
 
-  it('the first save of a session copies the previous store to the backup', async () => {
+  // Q0596: the backup used to copy the previous file at most every 5 minutes, so a restore brought
+  // back h1-b at 0.004 after a change to 0.005 (rc8 S6), and could miss a node deployed minutes earlier.
+  it('a price change reaches the backup at once (Q0596)', async () => {
+    writeFileSync(STORE, JSON.stringify({ ...good, nodes: [{ id: 'n1', moniker: 'kept', gigabytePriceDVPN: 0.004 }] }));
+    const { readStore, writeStore } = await fresh();
+    const s = await readStore();
+    await writeStore(s);
+    await writeStore({ ...s, nodes: [{ ...s.nodes[0], gigabytePriceDVPN: 0.005 }] });
+    expect(JSON.parse(readFileSync(BAK, 'utf8')).nodes[0].gigabytePriceDVPN).toBe(0.005);
+  });
+
+  it('a new node and its key backup reach the backup at once', async () => {
     writeFileSync(STORE, JSON.stringify(good));
     const { readStore, writeStore } = await fresh();
     const s = await readStore();
+    await writeStore(s);
+    await writeStore({ ...s, nodes: [...s.nodes, { id: 'n2', moniker: 'new' } as never], nodeBackups: { ...s.nodeBackups, n2: 'blob2' } });
+    const bak = JSON.parse(readFileSync(BAK, 'utf8'));
+    expect(bak.nodes.map((n: { id: string }) => n.id)).toEqual(['n1', 'n2']);
+    expect(bak.nodeBackups.n2).toBe('blob2');
+  });
+
+  it('control: a save with no nodes never replaces a backup that has some', async () => {
+    writeFileSync(STORE, JSON.stringify(good));
+    const { readStore, writeStore } = await fresh();
+    const s = await readStore();
+    await writeStore(s);
     await writeStore({ ...s, nodes: [] });
     expect(JSON.parse(readFileSync(BAK, 'utf8')).nodes[0].id).toBe('n1');
     expect(JSON.parse(readFileSync(STORE, 'utf8')).nodes).toEqual([]);

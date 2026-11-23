@@ -14,6 +14,17 @@ try {
   document.documentElement.setAttribute('data-theme', 'dark');
 }
 
+// Q0582: without GPU compositing, backdrop blur + endless animations keep both CPU cores busy and
+// starve the main process (an SSH handshake then misses its 12 s deadline). Checked at start and
+// again later, since Chromium can fall back to software after the GPU process starts.
+const applyLowGraphics = () =>
+  window.api.system
+    .lowGraphics()
+    .then((low) => document.documentElement.classList.toggle('low-graphics', low))
+    .catch((err: unknown) => console.warn('low-graphics check failed', err));
+void applyLowGraphics();
+setTimeout(() => void applyLowGraphics(), 10_000);
+
 window.addEventListener('unhandledrejection', (e) => {
   // eslint-disable-next-line no-console
   console.error('[unhandledrejection]', e.reason);

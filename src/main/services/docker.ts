@@ -798,7 +798,7 @@ export async function runOnce(opts: {
   await fs.mkdir(opts.hostDataDir, { recursive: true });
   const extra = opts.extra ?? {};
 
-  // 120 s, not 30 s: on a busy Linux host (a Linux test host, 2026-11-08) a create stalled past 30 s twice
+  // 120 s, not 30 s: on a busy Linux host (ctl-1, 2026-11-08) a create stalled past 30 s twice
   // while dockerd was otherwise healthy, failing the channel sweep. Slow creates are logged.
   const createStarted = Date.now();
   const container = await withDockerTimeout(

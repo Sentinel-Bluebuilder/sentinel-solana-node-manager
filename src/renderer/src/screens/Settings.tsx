@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChainHostCard } from '../components/ChainHostCard';
+import { SavedLoginsCard } from '../components/SavedLoginsCard';
 import { PageHeader } from '../components/PageHeader';
 import { MIcon } from '../components/MIcon';
 import { useApp } from '../store/app';
@@ -239,6 +240,8 @@ export function Settings() {
           </div>
 
           <ChainHostCard />
+
+          <SavedLoginsCard />
 
           <div className="card">
             <div className="card-header">

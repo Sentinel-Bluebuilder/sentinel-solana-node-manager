@@ -62,7 +62,7 @@ function nodeFor(c: Case): DeployedNode {
     port: 7777,
     serviceType: 'wireguard',
     status: 'loading',
-    operatorAddress: 'Node11111111111111111111111111111111111111',
+    operatorAddress: '9enW4xCJ1111111111111111111111111111111111',
     registeredOnChain: true,
     removalStage: c.stage,
     unbondsAt: new Date(Date.now() + (c.unlocked ? -60_000 : 30 * 60_000)).toISOString(),

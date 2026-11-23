@@ -37,7 +37,7 @@ describe('scrubSecrets (what watchers and the in-app stream may see)', () => {
 
 describe('tokenize keeps Windows paths intact inside double quotes', () => {
   it('only \\" and \\\\ are escapes', () => {
-    expect(tokenize(String.raw`wallet.importKey --file "C:\path\me\key.json"`)).toEqual(['wallet.importKey', '--file', String.raw`C:\path\me\key.json`]);
+    expect(tokenize(String.raw`wallet.importKey --file "C:\Users\me\key.json"`)).toEqual(['wallet.importKey', '--file', String.raw`C:\Users\me\key.json`]);
     expect(tokenize(String.raw`--memo "say \"hi\" \\ done"`)).toEqual(['--memo', String.raw`say "hi" \ done`]);
   });
 });

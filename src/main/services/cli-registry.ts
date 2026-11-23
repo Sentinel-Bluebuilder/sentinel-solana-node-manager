@@ -11,6 +11,10 @@
  */
 
 import { safeStorage } from 'electron';
+import { forgetLogin, listSavedLogins } from './ssh-vault';
+import { decodeBackup, noPhraseMessage } from './node-backup';
+import { adoptHost, recoveryServers } from './adopt';
+import { discoveredNodes } from './recovery';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -85,6 +89,7 @@ import {
   nodeSessions,
   programOverview,
   reconnectHost,
+  discoverNodes,
   cleanHostLeftovers,
   unwatchNode,
   watchNode,
@@ -979,14 +984,15 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
   {
     name: 'nodes.reconnect',
     group: 'nodes',
-    summary: 'Re-attach SSH credentials (memory-only) to every node on a host after an app restart.',
-    usage: 'nodes.reconnect --ssh-host 1.2.3.4 --ssh-user root [--ssh-port 22] (--ssh-key-file <path> | --ssh-password <pw>)',
+    summary: 'Re-attach SSH credentials to every node on a host after an app restart (--remember keeps them, encrypted).',
+    usage: 'nodes.reconnect --ssh-host 1.2.3.4 --ssh-user root [--ssh-port 22] (--ssh-key-file <path> | --ssh-password <pw>) [--remember]',
     args: [
       { name: 'ssh-host', kind: 'flag', required: true, describe: 'Host.' },
       { name: 'ssh-user', kind: 'flag', describe: 'User (default root).' },
       { name: 'ssh-port', kind: 'flag', describe: 'Port (default 22).' },
       { name: 'ssh-key-file', kind: 'flag', describe: 'Private key file path.' },
       { name: 'ssh-password', kind: 'flag', describe: 'Password.' },
+      { name: 'remember', kind: 'bool', describe: 'Keep this login on this computer (OS-keychain encrypted) so nodes reconnect after a restart.' },
     ],
     exec: async (p) => {
       const keyFile = optionalFlag(p, 'ssh-key-file');
@@ -998,8 +1004,79 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
           privateKey: keyFile ? await readArgFile('ssh-key-file', keyFile) : undefined,
           password: optionalFlag(p, 'ssh-password'),
         }),
+        { remember: boolFlag(p, 'remember') },
       );
     },
+  },
+  {
+    name: 'nodes.discover',
+    group: 'nodes',
+    summary: 'Recover nodes: scan the app wallet funding history for nodes this list does not hold (no Docker needed).',
+    usage: 'nodes.discover [--wallet <base58>]',
+    args: [{ name: 'wallet', kind: 'flag', describe: 'Scan this address instead, read only: needs no key and saves nothing (support, tests).' }],
+    exec: (p) => discoverNodes({ wallet: optionalFlag(p, 'wallet') }),
+  },
+  {
+    name: 'nodes.discovered',
+    group: 'nodes',
+    summary: 'Nodes found by nodes.discover that are not in the list yet (view only).',
+    usage: 'nodes.discovered',
+    args: [],
+    exec: () => discoveredNodes(),
+  },
+  {
+    name: 'nodes.recoveryServers',
+    group: 'nodes',
+    summary: 'Servers the Reconnect window offers (known hosts, hosts of found nodes, hosts waiting for a login).',
+    usage: 'nodes.recoveryServers',
+    args: [],
+    exec: () => recoveryServers(),
+  },
+  {
+    name: 'nodes.adopt',
+    group: 'nodes',
+    summary: 'Reconnect a server: attach the login and recover every node it runs that the list is missing.',
+    usage: 'nodes.adopt --ssh-host 1.2.3.4 --ssh-user root [--ssh-port 22] (--ssh-key-file <path> | --ssh-password <pw>) [--remember]',
+    args: [
+      { name: 'ssh-host', kind: 'flag', required: true, describe: 'Host.' },
+      { name: 'ssh-user', kind: 'flag', describe: 'User (default root).' },
+      { name: 'ssh-port', kind: 'flag', describe: 'Port (default 22).' },
+      { name: 'ssh-key-file', kind: 'flag', describe: 'Private key file path.' },
+      { name: 'ssh-password', kind: 'flag', describe: 'Password.' },
+      { name: 'remember', kind: 'bool', describe: 'Keep this login on this computer (OS-keychain encrypted).' },
+    ],
+    exec: async (p) => {
+      const keyFile = optionalFlag(p, 'ssh-key-file');
+      return adoptHost(
+        validateSSHCredentials({
+          host: requireFlag(p, 'ssh-host'),
+          port: numberFlag(p, 'ssh-port') ?? 22,
+          username: optionalFlag(p, 'ssh-user') ?? 'root',
+          privateKey: keyFile ? await readArgFile('ssh-key-file', keyFile) : undefined,
+          password: optionalFlag(p, 'ssh-password'),
+        }),
+        { remember: boolFlag(p, 'remember') },
+      );
+    },
+  },
+  {
+    name: 'logins.list',
+    group: 'nodes',
+    summary: 'Server logins saved on this computer (never shows the secret).',
+    usage: 'logins.list',
+    args: [],
+    exec: () => listSavedLogins(),
+  },
+  {
+    name: 'logins.forget',
+    group: 'nodes',
+    summary: 'Forget a saved server login.',
+    usage: 'logins.forget --ssh-host 1.2.3.4 [--ssh-port 22]',
+    args: [
+      { name: 'ssh-host', kind: 'flag', required: true, describe: 'Host.' },
+      { name: 'ssh-port', kind: 'flag', describe: 'Port (default 22).' },
+    ],
+    exec: (p) => forgetLogin(requireFlag(p, 'ssh-host'), numberFlag(p, 'ssh-port') ?? 22),
   },
   {
     name: 'nodes.cleanHostLeftovers',
@@ -1066,8 +1143,9 @@ export const MAIN_COMMANDS: MainCliCommand[] = [
       if (!safeStorage.isEncryptionAvailable())
         return { ok: false, error: 'OS keychain unavailable.' };
       try {
-        const mnemonic = safeStorage.decryptString(Buffer.from(blob, 'base64'));
-        return { ok: true, mnemonic };
+        const d = decodeBackup(blob);
+        if (d.kind === 'keypair') return { ok: false, error: noPhraseMessage(nodeId) };
+        return { ok: true, mnemonic: d.mnemonic };
       } catch (err) {
         return { ok: false, error: `Failed to decrypt: ${(err as Error).message}` };
       }

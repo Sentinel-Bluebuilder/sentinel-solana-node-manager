@@ -2,7 +2,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_UPDATER, type UpdaterState } from '../shared/updater-types';
 import {
   IPC,
+  type AdoptHostResultView,
   type AppEvent,
+  type DiscoveredNodeView,
+  type DiscoverResultView,
+  type RecoveryServerView,
   type AppSettings,
   type ChainHealth,
   type CliRunResult,
@@ -45,6 +49,7 @@ const api = {
 
   system: {
     report: (): Promise<LocalSystemReport> => ipcRenderer.invoke(IPC.SYSTEM_REPORT),
+    lowGraphics: (): Promise<boolean> => ipcRenderer.invoke(IPC.SYSTEM_LOW_GRAPHICS),
     exportDiagnostics: (): Promise<{ ok: boolean; path?: string; cancelled?: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.SYSTEM_DIAGNOSTICS),
     startLiveStats: (): Promise<{ ok: boolean }> =>
@@ -199,8 +204,19 @@ const api = {
     inspect: (id: string): Promise<{ inspect?: unknown; reachable: boolean; tlsPinMatches?: boolean; discoverable: boolean; answersOnHost?: boolean; blockedUpstream?: boolean; error?: string; guidance?: string }> =>
       ipcRenderer.invoke(IPC.NODES_INSPECT, id),
     daemon: (id: string): Promise<{ status: unknown; version: unknown }> => ipcRenderer.invoke(IPC.NODES_DAEMON, id),
-    reconnect: (creds: SSHCredentials): Promise<{ ok: boolean; nodes: string[]; error?: string }> =>
-      ipcRenderer.invoke(IPC.NODES_RECONNECT, creds),
+    reconnect: (
+      creds: SSHCredentials,
+      opts?: { remember?: boolean },
+    ): Promise<{ ok: boolean; nodes: string[]; error?: string; saved?: boolean; saveError?: string }> =>
+      ipcRenderer.invoke(IPC.NODES_RECONNECT, creds, opts),
+    savedLogins: (): Promise<Array<{ host: string; port: number; username: string; method: 'password' | 'key'; savedAt: string }>> =>
+      ipcRenderer.invoke(IPC.SSH_LOGINS_LIST),
+    forgetLogin: (host: string, port?: number): Promise<{ removed: boolean }> => ipcRenderer.invoke(IPC.SSH_LOGINS_FORGET, host, port),
+    discover: (): Promise<DiscoverResultView> => ipcRenderer.invoke(IPC.NODES_DISCOVER),
+    discovered: (): Promise<DiscoveredNodeView[]> => ipcRenderer.invoke(IPC.NODES_DISCOVERED),
+    recoveryServers: (): Promise<RecoveryServerView[]> => ipcRenderer.invoke(IPC.NODES_RECOVERY_SERVERS),
+    adoptHost: (creds: SSHCredentials, opts?: { remember?: boolean }): Promise<AdoptHostResultView> =>
+      ipcRenderer.invoke(IPC.NODES_ADOPT_HOST, creds, opts),
     sshConnected: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.NODES_SSH_STATUS, id),
     onChanged: (cb: () => void) => subscribe<null>(IPC.NODES_CHANGED, () => cb()),
     onLiveStatus: (cb: (u: NodeLiveStatusUpdate) => void) =>

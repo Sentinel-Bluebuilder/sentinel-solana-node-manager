@@ -94,7 +94,7 @@ export async function pickRPC(opts: { forRemoteHost?: boolean } = {}): Promise<s
   const { rpcUrls } = await getSettings();
   // A node or client on a VPS cannot reach this machine's loopback or LAN/VPC addresses, so a
   // gateway on 10.x/192.168.x serves only what runs here (FINAL check 2026-11-08: the remote
-  // node got http://10.0.0.5 and could not read the program config).
+  // node got http://10.128.0.26 and could not read the program config).
   const usable = opts.forRemoteHost ? rpcUrls.filter((u) => !rpcIsLocalOnly(u)) : rpcUrls;
   if (opts.forRemoteHost && !usable.length) {
     throw new Error(
@@ -271,7 +271,7 @@ async function finish(conn: Connection, signature: string, slot: number): Promis
   let feeLamports = 0;
   try {
     const tx = await withRetry(
-      () => conn.getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 }),
+      () => conn.getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 1 }),
       'getTransaction',
       3,
     );

@@ -1,6 +1,6 @@
 # Cosmos → Solana function map
 
-How every function of the Cosmos node-hosting app (the Cosmos app) maps to the Sentinel Solana program on devnet. Kept current with the code.
+How every function of the Cosmos node-hosting app (Desktop/node-deployer-experimental) maps to the Sentinel Solana program on devnet. Kept current with the code.
 
 ## Core design
 - **Program instructions + program reads → `dvpnctl`** (patched, every node instruction proven on
@@ -31,7 +31,7 @@ How every function of the Cosmos node-hosting app (the Cosmos app) maps to the S
 | REALITY | carries 0 bytes here → the app strips `security = "reality"` inbounds from v2ray/xray configs | doc 26 §7, handoff |
 | Build context | `upstream/` root (dvpnd + dvpnctl replace `../sentinel-go-sdk`, `../sentinel-programs/clients/go`); build ARGs `SENTINEL_NETWORK=devnet SENTINEL_PROGRAM_ID SENTINEL_MINT` | `go.mod`, upstream `Dockerfile` |
 | RPC | public `https://api.devnet.solana.com` (all suites passed on it) + 429 backoff; Settings may add more | `ctl-home/config.toml` |
-| A separate test host | x86_64, kernel 6.8, **wireguard + amneziawg modules loaded**, no Docker (the app's SSH flow installs it), 8 CPU / 31 GB / 400 GB free | read-only SSH check 2026-10-14 |
+| Stasis | x86_64, kernel 6.8, **wireguard + amneziawg modules loaded**, no Docker (the app's SSH flow installs it), 8 CPU / 31 GB / 400 GB free | read-only SSH check 2026-10-14 |
 
 ## Port pinning (makes all 6 protocols publishable)
 After `dvpnd init`, the app assigns each node a contiguous block `P…P+4`. It rewrites `[api] port = P`

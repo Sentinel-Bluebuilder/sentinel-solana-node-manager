@@ -159,6 +159,8 @@ export interface DeployedNode {
   remoteUrl?: string;
   /** ISO timestamp of when the node process most recently started (persisted). */
   startedAt?: string;
+  /** NM032: set when this record was rebuilt from the node's server (adopt.ts), not created by a deploy here. */
+  recoveredAt?: string;
 }
 
 export interface UpdateNodePricingRequest {
@@ -299,6 +301,8 @@ export interface NodeLiveStatus {
    * stored). Its health can't be read from here, which is not the same as an expired listing.
    */
   sshDisconnected?: boolean;
+  /** The node's server did not answer over SSH (just now or within the last minute): not live (Q0598). */
+  serverDown?: boolean;
   /** Null when everything is fine. */
   error?: string;
 }
@@ -554,7 +558,8 @@ export type EventKind =
   | 'funds-swept'
   | 'node-test-passed'
   | 'node-test-failed'
-  | 'store-recovered';
+  | 'store-recovered'
+  | 'nodes-recovered';
 
 export interface AppEvent {
   id: string;
@@ -722,6 +727,7 @@ export interface MnemonicExportResult {
 export const IPC = {
   // System / environment
   SYSTEM_REPORT: 'system:report',
+  SYSTEM_LOW_GRAPHICS: 'system:low-graphics',
   SYSTEM_ONLINE: 'system:online',
   SYSTEM_DIAGNOSTICS: 'system:diagnostics',
   SYSTEM_LIVE_STATS_START: 'system:live-stats-start',
@@ -804,6 +810,12 @@ export const IPC = {
   NODES_DAEMON: 'nodes:daemon',
   PROGRAM_STATUS: 'program:status',
   NODES_RECONNECT: 'nodes:reconnect',
+  SSH_LOGINS_LIST: 'ssh-logins:list',
+  SSH_LOGINS_FORGET: 'ssh-logins:forget',
+  NODES_DISCOVER: 'nodes:discover',
+  NODES_DISCOVERED: 'nodes:discovered',
+  NODES_ADOPT_HOST: 'nodes:adopt-host',
+  NODES_RECOVERY_SERVERS: 'nodes:recovery-servers',
   NODES_SSH_STATUS: 'nodes:ssh-status',
   NODES_LEASES: 'nodes:leases',
   NODES_CHANGED: 'nodes:changed', // main -> renderer push
@@ -867,4 +879,50 @@ export interface CliRunResult {
   /** Pretty-printed response text. Empty when ok===false. */
   text: string;
   error?: string;
+}
+
+// ─── NM032: Recover nodes (views shared with the renderer) ───
+
+/** A node found from the wallet's funding history that the list does not hold (view only). */
+export interface DiscoveredNodeView {
+  operatorAddress: string;
+  moniker: string;
+  fundTx: string;
+  fundedAt: string;
+  nodePda?: string;
+  chainNodeIdHex?: string;
+  chainStatus?: number;
+  host?: string;
+  noNodeOnChain?: boolean;
+  /** Listed, but its node account could not be read (RPC busy, or history check only): not confirmed live. */
+  unverified?: boolean;
+  checkedAt?: string;
+}
+
+export interface RecoveryServerView {
+  host: string;
+  port: number;
+  listedWaiting: number;
+  discovered: number;
+  connected: boolean;
+}
+
+export type RecoveryHostOutcome = 'reconnected' | 'wrong-login' | 'not-answering' | 'host-key-changed' | 'no-node-found' | 'error';
+
+export interface AdoptHostResultView {
+  host: string;
+  outcome: RecoveryHostOutcome;
+  message: string;
+  adopted: string[];
+  alreadyListed: string[];
+  skipped: Array<{ home: string; reason: string }>;
+  saved?: boolean;
+  saveError?: string;
+}
+
+export interface DiscoverResultView {
+  found: DiscoveredNodeView[];
+  fundedOnly: number;
+  alreadyManaged: number;
+  scannedTxs: number;
 }

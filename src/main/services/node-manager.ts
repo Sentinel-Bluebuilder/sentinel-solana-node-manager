@@ -1,4 +1,6 @@
 import { BrowserWindow, safeStorage } from 'electron';
+import { hostProbeMeansDown } from './ssh-failure';
+import { HOST_PROBE_TIMEOUT_MS, hostDownNow, noteHostDown, noteHostUp, provesNotLive, withTimeout } from './host-liveness';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
@@ -33,6 +35,7 @@ import {
   noChainHostMessage,
   isDockerUnavailable,
   isOlderPrebuiltTag,
+  shouldLogRepeat,
   nodeBusyMessage,
 } from './validate';
 import { PREBUILT_IMAGE_TAG } from './prebuilt-image';
@@ -46,7 +49,7 @@ import {
   explorerTx,
   protocolInfo,
 } from './chain';
-import { fetchBalances, sendFrom, signerFromMnemonic, tokenAccount, appKeypair, transferInstructions, refreshWalletBalance } from './wallet';
+import { fetchBalances, sendFrom, tokenAccount, appKeypair, transferInstructions, refreshWalletBalance } from './wallet';
 import { keypairToJson } from './keys';
 import { sendTx, connection, withRetry, withRpcTimeout, pickRPC, RPC_QUERY_TIMEOUT_MS } from './solana-client';
 import { getSettings } from './settings';
@@ -59,6 +62,7 @@ import {
   closeNode,
   ctl,
   ctlVersion,
+  decodeNode,
   daemonCloseSession,
   daemonInfo,
   daemonPositions,
@@ -82,8 +86,12 @@ import {
   type ChainLease,
   type ChainNode,
   type ProgramParams,
+  type Wrapped,
 } from './dvpnctl';
+import { discoverFromWallet, type DiscoverResult } from './recovery';
 import { log } from './logger';
+import { saveLogin, savedLoginFor } from './ssh-vault';
+import { keypairFromBackup } from './node-backup';
 import { hnsdNotRunningMessage, hnsProbe, hnsSyncState, waitForHnsd } from './hnsd';
 import { removePath } from './local-privileged';
 import {
@@ -179,14 +187,16 @@ export async function transition(id: string, status: NodeStatus): Promise<void> 
 
 // ─── Keys ───
 
-/** The node's key (its on-chain owner), from the encrypted phrase backup. */
+/**
+ * The node's key (its on-chain owner), from the encrypted backup: the recovery phrase of a node
+ * this app deployed, or (NM032) the key file of a node recovered from its server.
+ */
 export async function nodeKeypair(nodeId: string): Promise<Keypair> {
   const store = await readStore();
   const blob = store.nodeBackups[nodeId];
-  if (!blob) throw new Error('This node has no key backup in the app, so it cannot sign. Restore it from its recovery phrase first.');
+  if (!blob) throw new Error('This node has no key backup in the app, so it cannot sign. Reconnect its server (Nodes → Reconnect servers) to recover it.');
   if (!safeStorage.isEncryptionAvailable()) throw new Error('The OS keychain is unavailable; the node key backup cannot be decrypted.');
-  const mnemonic = safeStorage.decryptString(Buffer.from(blob, 'base64'));
-  return signerFromMnemonic(mnemonic);
+  return keypairFromBackup(blob);
 }
 
 /**
@@ -195,6 +205,7 @@ export async function nodeKeypair(nodeId: string): Promise<Keypair> {
  * computer's Docker with home = userData/nodes/<id> (for a local node that IS its home).
  */
 const noCredsLogged = new Set<string>();
+const waitReconnectLogged = new Map<string, { message: string; at: number }>();
 async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
   let remoteWhy = '';
   if (node.target === 'remote') {
@@ -209,14 +220,21 @@ async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
         noCredsLogged.add(node.id);
         log.warn('no SSH credentials for the node host; chain commands run on this computer until Reconnect', { id: node.id, host: node.host });
       }
+    } else if (hostDownNow(node.host)) {
+      // Q0598: known down a moment ago; don't spend three SSH attempts on it again.
+      noCredsLogged.delete(node.id);
+      remoteWhy = `it did not answer (${hostDownNow(node.host)?.message.slice(0, 160)})`;
     } else {
       noCredsLogged.delete(node.id);
       try {
         remote = await openRuntime(node, creds);
+        if (node.host) noteHostUp(node.host);
         remoteImage = (await remote.imageReady()) ? 'ready' : 'missing';
       } catch (err) {
-        remoteWhy = `it did not answer (${(err as Error).message.slice(0, 160)})`;
-        log.warn('node host unreachable for chain commands; using this computer', { id: node.id, err: (err as Error).message });
+        const message = (err as Error).message;
+        remoteWhy = `it did not answer (${message.slice(0, 160)})`;
+        log.warn('node host unreachable for chain commands; using this computer', { id: node.id, err: message });
+        if (node.host && hostProbeMeansDown('remote', message)) noteHostDown(node.host, message);
       }
     }
     if (remote && chainCtlPlace({ target: 'remote', hasCreds: Boolean(creds), remoteImage }) === 'node-host') return remote;
@@ -237,7 +255,11 @@ async function openChainCtl(node: DeployedNode): Promise<NodeRuntime> {
     const helper = await openChainHelper(node);
     if (helper) return helper;
     if (remoteWhy) {
-      if (!getSSH(node.id)) log.info('chain command waits for Reconnect; this computer could not run it', { id: node.id, err: (err as Error).message });
+      // T4: every poll lands here until Reconnect; once per hour per node (NM-C9 soak 2026-11-12).
+      if (!getSSH(node.id) && shouldLogRepeat(waitReconnectLogged.get(node.id), (err as Error).message, Date.now())) {
+        waitReconnectLogged.set(node.id, { message: (err as Error).message, at: Date.now() });
+        log.info('chain command waits for Reconnect; this computer could not run it', { id: node.id, err: (err as Error).message });
+      }
       throw new Error(remoteFallbackError(node.host ?? 'its server', remoteWhy, (err as Error).message, !getSSH(node.id)));
     }
     throw new Error(noChainHostMessage((err as Error).message));
@@ -481,6 +503,36 @@ async function withReadCtl<T>(fn: (rt: NodeRuntime) => Promise<T>): Promise<T> {
   } finally {
     await rt.removeFile('ctl/keys/owner.json').catch((err: unknown) => log.warn('read ctl key cleanup failed', { err: (err as Error).message }));
     await rt.close();
+  }
+}
+
+/**
+ * NM032 "Find my nodes": scan the wallet's funding history (recovery.ts). With local Docker the node
+ * accounts are read too (PDA, listed/delisted, advertised host); without it the scan still runs
+ * from RPC alone, which is the reporter's case (Docker Desktop often off).
+ */
+export async function discoverNodes(opts: { wallet?: string } = {}): Promise<DiscoverResult> {
+  let started = false;
+  try {
+    return await withReadCtl((rt) => {
+      started = true;
+      return discoverFromWallet(async (operator) => {
+        const rows = await ctl<Array<Wrapped<unknown>>>(rt, ['node', 'search', '--owner', operator], 'searching a node by its key');
+        const n = rows.map(decodeNode).find((x) => x.owner === operator);
+        if (!n) return null;
+        let host: string | undefined;
+        try {
+          host = n.uri ? new URL(n.uri.includes('://') ? n.uri : `https://${n.uri}`).hostname : undefined;
+        } catch (err) {
+          log.debug('find my nodes: node uri not a URL', { uri: n.uri, err: (err as Error).message });
+        }
+        return { nodePda: n.address, nodeIdHex: n.nodeIdHex, status: n.status, host };
+      }, opts);
+    });
+  } catch (err) {
+    if (started) throw err;
+    log.info('find my nodes: no local chain reader (Docker off?); scanning from RPC only', { err: (err as Error).message });
+    return discoverFromWallet(undefined, opts);
   }
 }
 
@@ -1222,7 +1274,11 @@ async function runRemovalStage(node: DeployedNode, stage: RemovalStage, force = 
           ports: firewallStillOpen ? nodePorts(node) : undefined,
         },
       });
-      log.warn('remote host cleanup pending; keeping the record so Reconnect can finish it', { id: node.id, err: hostErr.message });
+      // T4 (soak 2026-11-12): this runs on every poll tick until Reconnect; 23×/h per node in app.log.
+      if (shouldLogRepeat(hostCleanupLogged.get(node.id), hostErr.message, Date.now())) {
+        hostCleanupLogged.set(node.id, { message: hostErr.message, at: Date.now() });
+        log.warn('remote host cleanup pending; keeping the record so Reconnect can finish it', { id: node.id, err: hostErr.message });
+      }
       return 'sweep';
     }
     case 'done':
@@ -1248,6 +1304,8 @@ export async function clearNodeError(id: string, what: string): Promise<void> {
 }
 
 const pollFailures = new Map<string, number>();
+/** Last "remote host cleanup pending" warning per node (once per hour or on a new reason, T4). */
+const hostCleanupLogged = new Map<string, { message: string; at: number }>();
 
 // ─── Containers left behind while Docker was down (fix G) ───
 
@@ -1352,9 +1410,56 @@ export async function forgetServerNow(id: string): Promise<{ ok: boolean; error?
   }
 }
 
+// ─── Server liveness (Q0598) ───
+// A status check for a node whose server is down cost ~80 s (three SSH attempts for the chain read,
+// a chain read through another server, three more for the node probe), and the window, the poller
+// and the CLI all ran it against the same dead server at once: a call waited 240 s+ and the node
+// read 'online' from its chain listing the whole time (rc10 S4). A server that did not answer is now
+// remembered for a minute: status answers 'not live' at once and chain commands skip it.
+
 // ─── Live status ───
 
 export async function liveStatus(id: string): Promise<NodeLiveStatus> {
+  const status = await liveStatusRaw(id);
+  await applyVerdict(id, status).catch((err: unknown) => log.warn('saving the node verdict failed', { id, err: (err as Error).message }));
+  return status;
+}
+
+const verdictBusy = new Set<string>();
+
+/**
+ * Turn one status answer into the node's state: online, or not live with an Activity entry.
+ * Q0598: this ran only in the background poller, which a dead server's slow checks starved (rc10: one
+ * verdict after 16 min, rc11: none in 13 min) while the window and CLI got 'not live' answers in ms.
+ * Now every caller applies it; one at a time per node so two callers can't add the event twice.
+ */
+async function applyVerdict(id: string, status: NodeLiveStatus): Promise<void> {
+  if (verdictBusy.has(id)) return;
+  verdictBusy.add(id);
+  try {
+    const node = (await readStore()).nodes.find((n) => n.id === id);
+    if (!node || node.removalStage || isDeploying(id)) return;
+    if (status.reachable && node.status !== 'online' && node.status !== 'offline') {
+      log.info('node online', { id, moniker: node.moniker });
+      await transition(id, 'online');
+      await addEvent({ kind: 'node-online', title: `Node ${node.moniker} is online`, subtitle: 'Listed on Solana devnet', relatedNodeId: id });
+    } else if (node.status === 'online' && provesNotLive(status)) {
+      // A failed chain read (RPC 429, no SSH session: T9 h) is unknown, not 'not live' (Q0602);
+      // a server just seen not answering is not live (Q0598).
+      const sinceStart = Date.now() - (startedAt.get(id) ?? 0);
+      if (sinceStart > 120_000) {
+        const why = status.error ?? `chain status ${status.chainStatus}`;
+        log.info('node not live', { id, moniker: node.moniker, why });
+        await transition(id, 'error');
+        await addEvent({ kind: 'node-unreachable', title: `Node ${node.moniker} is not live`, subtitle: why, relatedNodeId: id });
+      }
+    }
+  } finally {
+    verdictBusy.delete(id);
+  }
+}
+
+async function liveStatusRaw(id: string): Promise<NodeLiveStatus> {
   const node = await mustGet(id);
   const t0 = Date.now();
   const status: NodeLiveStatus = {
@@ -1371,6 +1476,13 @@ export async function liveStatus(id: string): Promise<NodeLiveStatus> {
     sshDisconnected: node.target === 'remote' && !hasSSH(id) ? true : undefined,
     hnsImageOutdated: hnsImageOutdated(node) || undefined,
   };
+  const down = node.target === 'remote' ? hostDownNow(node.host) : undefined;
+  if (down) {
+    status.reachable = false;
+    status.serverDown = true;
+    status.error = `${node.host} does not answer over SSH (since ${new Date(down.at).toLocaleTimeString()}): the node cannot be serving.`;
+    return status;
+  }
   try {
     const conn = await connection();
     status.chainHeight = await withRetry(() => conn.getSlot(), 'getSlot', 3);
@@ -1409,7 +1521,8 @@ export async function liveStatus(id: string): Promise<NodeLiveStatus> {
   }
   if (!node.removalStage || node.removalStage === 'redeem') {
     try {
-      await withHost(node, async (rt) => {
+      await withTimeout(withHost(node, async (rt) => {
+        if (node.host) noteHostUp(node.host);
         status.logTail = await rt.logs(60);
         if (await rt.isRunning()) {
           const sessions = await daemonSessions(rt);
@@ -1441,9 +1554,17 @@ export async function liveStatus(id: string): Promise<NodeLiveStatus> {
         } else {
           status.reachable = false;
         }
-      });
+      }), HOST_PROBE_TIMEOUT_MS, node.host ?? 'the node server');
     } catch (err) {
-      status.error = status.error ?? (err as Error).message;
+      const message = (err as Error).message;
+      status.error = status.error ?? message;
+      // Q0598: a server that does not answer cannot be serving. Without this a stopped server read
+      // 'online' from its chain listing until the listing aged out (8+ min in rc8 S4).
+      if (hostProbeMeansDown(node.target, message)) {
+        status.reachable = false;
+        status.serverDown = true;
+        if (node.host) noteHostDown(node.host, message);
+      }
     }
   }
   return status;
@@ -1569,17 +1690,7 @@ export function startPoller(): void {
           chainHeight: status.chainHeight,
           reachable: status.reachable,
         });
-        if (status.reachable && node.status !== 'online' && node.status !== 'offline') {
-          await transition(node.id, 'online');
-          await addEvent({ kind: 'node-online', title: `Node ${node.moniker} is online`, subtitle: 'Listed on Solana devnet', relatedNodeId: node.id });
-        } else if (!status.reachable && node.status === 'online' && !(status.sshDisconnected && status.chainStatus === undefined)) {
-          // A server node with no SSH session whose chain read failed: unknown, not 'not live' (T9 h).
-          const sinceStart = Date.now() - (startedAt.get(node.id) ?? 0);
-          if (sinceStart > 120_000) {
-            await transition(node.id, 'error');
-            await addEvent({ kind: 'node-unreachable', title: `Node ${node.moniker} is not live`, subtitle: status.error ?? `chain status ${status.chainStatus}`, relatedNodeId: node.id });
-          }
-        }
+        // The online / not-live verdict is applied inside liveStatus (applyVerdict), for every caller.
         if (pollFailures.delete(node.id)) await clearNodeError(node.id, 'Status check');
       } catch (err) {
         // One miss is noise; three in a row is something the user must see (fix F).
@@ -1840,7 +1951,10 @@ export function hasSSH(nodeId: string): boolean {
  * connection, then remembers them (in memory only) for every node on that host,
  * so stalled removals and host operations resume on the next poll.
  */
-export async function reconnectHost(creds: SSHCredentials): Promise<{ ok: boolean; nodes: string[]; error?: string }> {
+export async function reconnectHost(
+  creds: SSHCredentials,
+  opts: { remember?: boolean } = {},
+): Promise<{ ok: boolean; nodes: string[]; error?: string; saved?: boolean; saveError?: string }> {
   const { testSSHConnection } = await import('./ssh');
   const t = await testSSHConnection(creds);
   if (!t.ok) return { ok: false, nodes: [], error: t.message };
@@ -1850,6 +1964,37 @@ export async function reconnectHost(creds: SSHCredentials): Promise<{ ok: boolea
     // force: the user just supplied the credentials the cleanup was waiting for.
     if (n.removalStage) void advanceRemoval(n.id, { force: true }).catch((err: unknown) => log.warn('resume removal after reconnect failed', { id: n.id, err: (err as Error).message }));
   }
+  // NM032: keep the login (encrypted) only when the user asked to, and only after it worked.
+  let saved: boolean | undefined;
+  let saveError: string | undefined;
+  if (opts.remember) {
+    try {
+      await saveLogin(creds);
+      saved = true;
+    } catch (err) {
+      saved = false;
+      saveError = (err as Error).message;
+      log.warn('could not save server login', { host: creds.host, err: saveError });
+    }
+  }
   broadcast(IPC.NODES_CHANGED, null);
-  return { ok: true, nodes: nodes.map((n) => n.moniker) };
+  return { ok: true, nodes: nodes.map((n) => n.moniker), saved, saveError };
+}
+
+/**
+ * NM032: at start-up, give every remote node the login its host has in the vault, so nodes
+ * whose user ticked "Remember logins" are manageable without a Reconnect after a restart.
+ * Never connects anything; the poller uses the logins on its next tick.
+ */
+export async function applySavedLogins(): Promise<number> {
+  let applied = 0;
+  for (const n of await listNodes()) {
+    if (n.target !== 'remote' || !n.host || sshKeyring.has(n.id)) continue;
+    const creds = await savedLoginFor(n.host, n.sshPort);
+    if (!creds) continue;
+    sshKeyring.set(n.id, creds);
+    applied += 1;
+  }
+  if (applied) log.info('saved server logins applied', { nodes: applied });
+  return applied;
 }

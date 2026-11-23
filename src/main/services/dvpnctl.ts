@@ -142,7 +142,7 @@ export interface ProgramParams {
   paused: number;
 }
 
-interface Wrapped<T> {
+export interface Wrapped<T> {
   address: string;
   slot: number;
   value: T;

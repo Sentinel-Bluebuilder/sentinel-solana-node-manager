@@ -12,7 +12,7 @@ import {
 // Fixtures are verbatim `dvpnd init --role node` output from the devnet image.
 const NODE = `country = 'US'
 id = 'dbd14c111d963a16760e4891fdacea8404cf71954efdde08b39dfa75c9fc0fe7'
-owner = '11111111111111111111111111111111'
+owner = '9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj'
 service = 'wireguard'
 
 [api]
@@ -114,7 +114,7 @@ describe('patchNodeConfig', () => {
     expect(getKey(out, 'prices', 'channel_per_hour')).toBe('2000');
     expect(getKey(out, 'prices', 'lease_per_hour')).toBe('1500');
     expect(getKey(out, 'redeem', 'threshold')).toBe('1');
-    expect(getKey(out, '', 'owner')).toBe('11111111111111111111111111111111');
+    expect(getKey(out, '', 'owner')).toBe('9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj');
   });
 
   it('turns the HNS resolver on and off in [handshake_dns]', () => {

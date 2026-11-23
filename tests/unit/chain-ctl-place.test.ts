@@ -19,8 +19,8 @@ describe('remoteFallbackError', () => {
     expect(m).toContain('buildx plugin');
   });
   it('NM-C9-3: no SSH session at all -> Reconnect only, no Docker install hint (no Start Docker buttons)', () => {
-    const m = remoteFallbackError('198.51.100.20', 'the app has no SSH connection to it', 'Docker Desktop is not installed. Install it from https://www.docker.com/', true);
-    expect(m).toContain('Reconnect to 198.51.100.20');
+    const m = remoteFallbackError('172.182.220.109', 'the app has no SSH connection to it', 'Docker Desktop is not installed. Install it from https://www.docker.com/', true);
+    expect(m).toContain('Reconnect to 172.182.220.109');
     expect(m).not.toMatch(/Docker/i);
   });
 });

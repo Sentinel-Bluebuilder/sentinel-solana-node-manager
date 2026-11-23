@@ -61,7 +61,7 @@ describe('mnemonics and keypairs', () => {
 
 describe('address validation', () => {
   it('accepts a wallet, rejects bech32 and PDAs', () => {
-    expect(isWalletAddress('11111111111111111111111111111111')).toBe(true);
+    expect(isWalletAddress('9enW4xCJrmytnEC6VsJYPbcT2ng3QTUwUkAHSrKR9Xrj')).toBe(true);
     expect(isWalletAddress('sent1lwzpjwcvaqmcre5hx63ez80uyzre49ukacc84u')).toBe(false);
     // User PDA of the wallet above — off-curve, not a wallet.
     expect(isWalletAddress('9ynMXMfC2CQgNCbG6bvkuB5MwrA73yYvUDDH1PfHt3Qn')).toBe(false);

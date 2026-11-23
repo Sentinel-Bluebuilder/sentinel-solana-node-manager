@@ -12,3 +12,10 @@ build-ctx/
 # E2E run artifacts
 tests/e2e/last-run.log
 tests/e2e/last-report.json
+
+# NM032 Lane C evidence: store/key snapshots never leave the laptop
+evidence/nm032/**/*store*.json
+evidence/nm032/**/*.pem
+evidence/nm032/**/golden*
+evidence/nm032/**/*.secret
+evidence/nm032/**/wallet*

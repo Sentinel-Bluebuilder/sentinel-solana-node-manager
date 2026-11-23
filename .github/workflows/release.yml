@@ -10,6 +10,9 @@ on:
   push:
     tags:
       - 'v*.*.*'
+      # RC tags (v0.3.2-rc12) are built and verified on the build box; a CI draft beside the box
+      # draft had different files and could be picked up by mistake (NM032).
+      - '!v*-rc*'
   workflow_dispatch:
 
 permissions:

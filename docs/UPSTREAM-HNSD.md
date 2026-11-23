@@ -3,7 +3,7 @@
 Findings from the Node Manager HNS work (Solana `sentinel-dvpnd` and, compared on 2026-11-12, the Cosmos `sentinel-dvpnx`), ready to file upstream (issue or PR on
 `sentinel-official/sentinel-solana`). Node Manager works around all of them inside its own node image;
 upstream fixes would make the workarounds unnecessary. Not filed yet: the bot's fork has issues
-disabled, and filing them is a separate decision.
+disabled, and upstream PRs are outside the Node Manager lane. Owner's call.
 
 ## 1. Any hnsd exit stops the whole node daemon
 
@@ -21,7 +21,7 @@ re-syncs with the chain.
   `stopGrace`, `service_unix.go` `terminate`).
 - **Evidence:** container test (hnsd SIGKILLed → back in 5 s under the same supervisor;
   supervisor SIGTERM → all hnsd gone in 0.8 s). Real-arm64 self-test row "supervisor restarts a
-  killed hnsd".
+  killed hnsd" (build box `~/nm031/evidence/`, arm VM `~/h2arm/`).
 
 ## 2. hnsd's own recursive resolver fails many ICANN names
 
@@ -88,5 +88,5 @@ A Cosmos node (no checkpoint) pays the first-sync row on EVERY restart.
 ## Also worth knowing
 
 - hnsd v2.0.0 finds peers on ports other than 12038/44806: blocking only those two did not stop
-  it syncing (2026-11-12 test). A firewall must allow outbound TCP in general.
-- Evidence: kept with the Node Manager test records (not in this repository).
+  it syncing (NM-C9, 2026-11-12). A firewall must allow outbound TCP in general.
+- Evidence: build box `~/nm031/evidence/{cosmos-hnsd,hns-side}/`, small VPS `~/hns-load/`.

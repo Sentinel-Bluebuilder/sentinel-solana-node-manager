@@ -1,4 +1,13 @@
 import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron';
+
+/** True when Chromium composites in software (no usable GPU), or SNM_LOW_GRAPHICS=1 forces it. */
+function lowGraphics(): boolean {
+  if (process.env.SNM_LOW_GRAPHICS === '1') return true;
+  if (process.env.SNM_LOW_GRAPHICS === '0') return false;
+  const st = app.getGPUFeatureStatus() as unknown as Record<string, string | undefined>;
+  const comp = st.gpu_compositing ?? '';
+  return comp.startsWith('disabled') || comp.startsWith('unavailable');
+}
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import QRCode from 'qrcode';
@@ -22,6 +31,11 @@ import {
 } from '../shared/types';
 import { testSSHConnection } from './services/ssh';
 import { vUUID, validateSSHCredentials, validateHostPort, clampEventLimit } from './services/validate';
+import { forgetLogin, listSavedLogins } from './services/ssh-vault';
+import { decodeBackup, noPhraseMessage } from './services/node-backup';
+import { adoptHost, autoDiscover, recoveryServers } from './services/adopt';
+import { discoveredNodes } from './services/recovery';
+import { discoverNodes } from './services/node-manager';
 import { writeDiagnosticsZip, renderLogExport } from './services/diagnostics';
 import { forgetHostKey } from './services/host-keys';
 import { publishNodeSpecs } from './services/node-specs';
@@ -162,6 +176,9 @@ async function reportLocalSystem(): Promise<LocalSystemReport> {
 
 export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.SYSTEM_REPORT, reportLocalSystem);
+  // Q0582: no GPU compositing (VMs, remote desktops, old drivers) = every frame is drawn on the CPU and
+  // the browser process presents it; the renderer then turns blur and endless animations off.
+  ipcMain.handle(IPC.SYSTEM_LOW_GRAPHICS, () => lowGraphics());
   ipcMain.handle(IPC.SYSTEM_LIVE_STATS_START, () => {
     startLiveStats();
     return { ok: true };
@@ -224,7 +241,11 @@ export function registerIpcHandlers(): void {
   // -- Wallet ----------------------------------------------------------------
   ipcMain.handle(IPC.WALLET_GET, () => getWallet());
   ipcMain.handle(IPC.WALLET_CREATE, () => createWallet());
-  ipcMain.handle(IPC.WALLET_RESTORE, (_e, mnemonic: string) => restoreWallet(mnemonic));
+  ipcMain.handle(IPC.WALLET_RESTORE, async (_e, mnemonic: string) => {
+    const w = await restoreWallet(mnemonic);
+    autoDiscover('wallet restored'); // NM032: a re-imported wallet finds its nodes again
+    return w;
+  });
   ipcMain.handle(IPC.WALLET_REFRESH_BALANCE, () => refreshWalletBalance());
   ipcMain.handle(IPC.WALLET_SEND, (_e, req: SendTxRequest) => {
     enforceRate('wallet-send', 5, 0.5); // 5 burst, ~one every 2s after that
@@ -241,7 +262,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.WALLET_LOGOUT, () => logoutWallet());
   ipcMain.handle(IPC.WALLET_IMPORT_KEY, (_e, body: string) => {
     if (typeof body !== 'string' || body.length > 4096) throw new Error('key file body must be a short JSON string');
-    return importKeyFile(body);
+    return importKeyFile(body).then((w) => {
+      autoDiscover('wallet key file imported'); // NM032
+      return w;
+    });
   });
 
   // -- Events ----------------------------------------------------------------
@@ -355,7 +379,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.NODES_INSPECT, (_e, id: string) => inspectNodeTrust(vUUID(id, 'node id')));
   ipcMain.handle(IPC.NODES_DAEMON, (_e, id: string) => nodeDaemonInfo(vUUID(id, 'node id')));
   ipcMain.handle(IPC.PROGRAM_STATUS, () => programOverview());
-  ipcMain.handle(IPC.NODES_RECONNECT, (_e, creds: SSHCredentials) => reconnectHost(validateSSHCredentials(creds)));
+  ipcMain.handle(IPC.NODES_RECONNECT, (_e, creds: SSHCredentials, opts?: { remember?: boolean }) =>
+    reconnectHost(validateSSHCredentials(creds), { remember: opts?.remember === true }),
+  );
+  ipcMain.handle(IPC.SSH_LOGINS_LIST, () => listSavedLogins());
+  ipcMain.handle(IPC.NODES_DISCOVER, () => discoverNodes());
+  ipcMain.handle(IPC.NODES_DISCOVERED, () => discoveredNodes());
+  ipcMain.handle(IPC.NODES_RECOVERY_SERVERS, () => recoveryServers());
+  ipcMain.handle(IPC.NODES_ADOPT_HOST, (_e, creds: SSHCredentials, opts?: { remember?: boolean }) =>
+    adoptHost(validateSSHCredentials(creds), { remember: opts?.remember === true }),
+  );
+  ipcMain.handle(IPC.SSH_LOGINS_FORGET, (_e, host: string, port?: number) => {
+    const { host: h, port: p } = validateHostPort(host, port ?? 22);
+    return forgetLogin(h, p);
+  });
   ipcMain.handle(IPC.NODES_SSH_STATUS, (_e, id: string) => hasSSH(vUUID(id, 'node id')));
   ipcMain.handle(
     IPC.NODES_PUBLISH_SPECS,
@@ -424,8 +461,9 @@ export function registerIpcHandlers(): void {
       return { ok: false, error: 'OS keychain unavailable — cannot decrypt backup.' };
     }
     try {
-      const mnemonic = safeStorage.decryptString(Buffer.from(blob, 'base64'));
-      return { ok: true, mnemonic };
+      const d = decodeBackup(blob);
+      if (d.kind === 'keypair') return { ok: false, error: noPhraseMessage(nodeId) };
+      return { ok: true, mnemonic: d.mnemonic };
     } catch (err) {
       return { ok: false, error: `Failed to decrypt backup: ${toUserError(err, 'mnemonic-decrypt')}` };
     }
