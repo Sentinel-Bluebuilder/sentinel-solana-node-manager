@@ -78,9 +78,9 @@ export function ChainHostCard() {
         ) : (
           <>
             <div className="grid grid-cols-12 gap-2">
-              <input className="field-input mono-inline col-span-6" placeholder="Server address" value={host} onChange={(e) => setHost(e.target.value)} aria-label="Server address" />
-              <input className="field-input mono-inline col-span-2" placeholder="22" value={port} onChange={(e) => setPort(e.target.value)} aria-label="SSH port" />
-              <input className="field-input mono-inline col-span-4" placeholder="root" value={user} onChange={(e) => setUser(e.target.value)} aria-label="SSH user" />
+              <input className="field-input mono-inline col-span-12" placeholder="Server address" value={host} onChange={(e) => setHost(e.target.value)} aria-label="Server address" />
+              <input className="field-input mono-inline col-span-4" placeholder="22" value={port} onChange={(e) => setPort(e.target.value)} aria-label="SSH port" />
+              <input className="field-input mono-inline col-span-8" placeholder="root" value={user} onChange={(e) => setUser(e.target.value)} aria-label="SSH user" />
             </div>
             <div className="flex gap-2">
               <button className={`btn btn-sm flex-1 ${mode === 'key' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('key')}>

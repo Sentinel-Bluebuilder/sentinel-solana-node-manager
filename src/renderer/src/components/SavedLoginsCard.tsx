@@ -30,7 +30,7 @@ export function SavedLoginsCard() {
     setBusy(k);
     try {
       await window.api.nodes.forgetLogin(l.host, l.port);
-      pushToast({ tone: 'success', title: `Login for ${l.host} forgotten`, body: 'Its nodes stay listed; reconnect the server to control them again.' });
+      pushToast({ tone: 'success', title: `Login for ${l.host} forgotten`, body: 'It is not saved any more. This session keeps using it until the app restarts; after that, reconnect the server to control its nodes.' });
       await load();
     } catch (err) {
       pushToast({ tone: 'error', title: 'Could not forget the login', body: (err as Error).message });
@@ -58,9 +58,10 @@ export function SavedLoginsCard() {
               return (
                 <li key={k} className="flex items-center gap-2">
                   <MIcon name={l.method === 'key' ? 'key' : 'password'} size={14} />
-                  <span className="mono-inline text-xs flex-1 truncate" style={{ color: 'var(--text)' }} title={k}>
-                    {l.username}@{l.host}
-                    {l.port !== 22 ? `:${l.port}` : ''}
+                  <span className="mono-inline text-xs flex-1 min-w-0" style={{ color: 'var(--text)', overflowWrap: 'anywhere' }} title={k}>
+                    {l.username}@<wbr />
+                    {l.host}
+                    {l.port !== 22 ? <span style={{ whiteSpace: 'nowrap' }}>:{l.port}</span> : null}
                   </span>
                   <button className="btn btn-ghost" style={{ height: 24, padding: '0 8px', fontSize: 11 }} disabled={busy === k} onClick={() => void forget(l)}>
                     Forget

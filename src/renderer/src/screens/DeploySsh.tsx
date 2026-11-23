@@ -387,8 +387,8 @@ export function DeploySsh() {
                 }}
               >
                 <MIcon name="lock" size={12} style={{ marginTop: 2, color: 'var(--accent)' }} />
-                SSH credentials live only in memory (after an app restart, use Reconnect on the
-                node page). The node key is generated here, backed up encrypted with the OS
+                The login you enter here is used for this session only. After a restart, use Reconnect
+                servers on My Nodes and tick Remember logins to keep it (encrypted by your OS). The node key is generated here, backed up encrypted with the OS
                 keychain, and written to the host over SFTP with mode 0600 — it is the node's
                 on-chain owner, so the host must be one you trust.
               </div>

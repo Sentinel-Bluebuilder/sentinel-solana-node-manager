@@ -11,6 +11,16 @@ export function classifySshFailure(message: string): RecoveryHostOutcome {
 }
 
 /**
+ * v0.3.3: what the user reads for a login the server refused. The SSH library says "All configured
+ * authentication methods failed", which tells a user nothing; the raw text stays in app.log.
+ */
+export function wrongLoginMessage(raw: string): string {
+  if (/bad passphrase/i.test(raw)) return 'The passphrase for this key file is wrong.';
+  if (/Cannot parse privateKey/i.test(raw)) return 'This key file could not be read. Choose your private key (not the .pub file).';
+  return 'The server did not accept this username and password or key. If this server uses a different login, select just it and try again.';
+}
+
+/**
  * Q0598: whether a failed host probe proves the node cannot be serving. Only a server node whose
  * server does not answer at all: a wrong login, a changed host key or a missing login say nothing
  * about the node, which may well be running.

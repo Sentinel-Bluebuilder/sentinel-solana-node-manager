@@ -289,6 +289,9 @@ export function Nodes() {
       return true;
     });
   }, [nodes, targetFilter, protocolFilter]);
+  // Nodes found from the wallet are server nodes of unknown protocol: they follow the Target filter
+  // and only show under "all" protocols (they used to show under every filter, e.g. Local).
+  const shownDiscovered = targetFilter !== 'local' && protocolFilter === 'all' ? discovered : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -394,7 +397,7 @@ export function Nodes() {
             <span className="font-semibold" style={{ color: 'var(--text)', fontSize: 15 }}>
               {discovered.length > 0
                 ? `${discovered.length} node${discovered.length === 1 ? '' : 's'} restored from your wallet`
-                : `${waitingListed} node${waitingListed === 1 ? '' : 's'} need${waitingListed === 1 ? 's' : ''} their server login`}
+                : `${waitingListed} node${waitingListed === 1 ? '' : 's'} need${waitingListed === 1 ? 's its' : ' their'} server login`}
             </span>
             <span className="text-[13px]" style={{ color: 'var(--text-dim)', lineHeight: 1.45 }}>
               {discovered.length > 0
@@ -510,7 +513,7 @@ export function Nodes() {
           <div className="card-header flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className="card-title">All nodes</div>
-              <span className="mono-tag">{filtered.length + discovered.length} shown</span>
+              <span className="mono-tag">{filtered.length + shownDiscovered.length} shown</span>
             </div>
             <div className="flex items-center gap-2">
               <FilterGroup
@@ -539,7 +542,7 @@ export function Nodes() {
               />
             </div>
           </div>
-          {filtered.length === 0 && discovered.length === 0 ? (
+          {filtered.length === 0 && shownDiscovered.length === 0 ? (
             <div className="card-body">
               <div className="empty-state">
                 <MIcon name="filter_alt" size={24} />
@@ -650,7 +653,7 @@ export function Nodes() {
                       </tr>
                     );
                   })}
-                  {discovered.map((d) => (
+                  {shownDiscovered.map((d) => (
                     <tr key={`found-${d.operatorAddress}`}>
                       <td style={{ color: 'var(--text)', fontWeight: 500, textAlign: 'left', maxWidth: 200 }}>
                         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>

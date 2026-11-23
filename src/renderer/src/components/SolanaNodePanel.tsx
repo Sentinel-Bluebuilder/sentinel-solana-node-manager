@@ -70,7 +70,7 @@ export function SolanaNodePanel({ node, status }: { node: DeployedNode; status: 
     node.target === 'remote' && !sshOk ? (
       <div className="callout callout-warn text-xs flex flex-col gap-2">
         <div>
-          The app restarted, so it no longer holds SSH access to <b>{node.host}</b> (credentials are never stored). Reconnect to
+          The app has no login for <b>{node.host}</b> (it was not saved, or it was forgotten). Reconnect to
           manage this node{node.removalStage ? ' and let its removal continue' : ''}.
         </div>
         <div className="flex gap-2 flex-wrap">

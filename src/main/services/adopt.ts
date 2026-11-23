@@ -49,7 +49,7 @@ export interface AdoptHostResult {
 }
 
 /** Sort an SSH failure into what the Reconnect window shows. */
-import { classifySshFailure } from './ssh-failure';
+import { classifySshFailure, wrongLoginMessage } from './ssh-failure';
 export { classifySshFailure };
 
 /** Host part of a node's on-chain uri (`https://1.2.3.4:41000` → `1.2.3.4`). */
@@ -168,7 +168,7 @@ export async function adoptHost(creds: SSHCredentials, opts: { remember?: boolea
   if (!t.ok) {
     const outcome = classifySshFailure(t.message);
     log.warn('reconnect server: login failed', { host, outcome, err: t.message });
-    return { ...base, outcome, message: t.message };
+    return { ...base, outcome, message: outcome === 'wrong-login' ? wrongLoginMessage(t.message) : t.message };
   }
 
   // Nodes the list already has on this host get the login (and it is saved if asked).
@@ -299,12 +299,17 @@ export async function recoveryServers(): Promise<RecoveryServer[]> {
     if (d.noNodeOnChain || listedOwners.has(d.operatorAddress) || !d.host) continue;
     add(d.host).discovered += 1;
   }
+  const hasLogin = new Set<string>();
   for (const n of store.nodes) {
     if (n.target !== 'remote' || !n.host) continue;
     const s = add(n.host, n.sshPort ?? 22);
-    if (getSSH(n.id)) s.connected = true;
+    if (getSSH(n.id)) hasLogin.add(n.host.toLowerCase());
     else s.listedWaiting += 1;
   }
+  // Connected = nothing left to do there: a login is held and no node on that server still waits for
+  // one. Before, one node with a login hid the server even when its other nodes (or nodes found from
+  // the wallet) still needed it, and the per-node Reconnect link opened with nothing to select.
+  for (const [k, s] of byHost) s.connected = hasLogin.has(k) && s.listedWaiting === 0 && s.discovered === 0;
   return [...byHost.values()].sort((a, b) => Number(a.connected) - Number(b.connected) || b.discovered - a.discovered || a.host.localeCompare(b.host));
 }
 

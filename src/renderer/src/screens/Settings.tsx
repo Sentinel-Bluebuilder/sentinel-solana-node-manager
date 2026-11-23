@@ -64,7 +64,7 @@ export function Settings() {
       await refreshChainHealth();
     } catch (err) {
       // The main process refuses a bad value (wrong folder, bad RPC URL) instead of storing it.
-      pushToast({ title: 'Settings not saved', body: (err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), tone: 'error' });
+      pushToast({ title: 'Settings not saved', body: (err as Error).message, tone: 'error' });
     } finally {
       setSaving(false);
     }

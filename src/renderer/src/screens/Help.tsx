@@ -55,7 +55,7 @@ const SECTIONS: HelpSection[] = [
         bullets: [
           'Paste the IP, SSH user, and a key or password; root or passwordless sudo',
           'Open the node\u2019s five ports in the provider firewall — clients dial them directly',
-          'SSH credentials are never stored: after an app restart, use Reconnect on the node page',
+          'Logins are kept only if you tick "Remember logins" (encrypted by your OS); otherwise use Reconnect servers on My Nodes after a restart',
         ],
       },
       {
@@ -155,7 +155,7 @@ const SECTIONS: HelpSection[] = [
       {
         icon: 'link_off',
         title: 'Remote node after an app restart',
-        body: 'SSH credentials are kept in memory only. The node page shows a Reconnect prompt; paste the key again (or run nodes.reconnect from the CLI) and any paused removal continues.',
+        body: 'Unless you ticked Remember logins, the app forgets server logins when it closes. Use Reconnect servers on My Nodes (or nodes.reconnect --remember from the CLI); any paused removal then continues.',
       },
       {
         icon: 'bug_report',

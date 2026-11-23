@@ -1958,7 +1958,8 @@ export async function reconnectHost(
   const { testSSHConnection } = await import('./ssh');
   const t = await testSSHConnection(creds);
   if (!t.ok) return { ok: false, nodes: [], error: t.message };
-  const nodes = (await listNodes()).filter((n) => n.target === 'remote' && n.host === creds.host);
+  const hostKey = creds.host.trim().toLowerCase();
+  const nodes = (await listNodes()).filter((n) => n.target === 'remote' && n.host?.trim().toLowerCase() === hostKey);
   for (const n of nodes) {
     sshKeyring.set(n.id, creds);
     // force: the user just supplied the credentials the cleanup was waiting for.

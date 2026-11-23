@@ -2,6 +2,20 @@
 
 History of the Cosmos-era app lives in `Desktop/node-deployer-experimental`.
 
+## 0.3.3 — Reconnect servers fixes
+
+- A refused login says "The server did not accept this username and password or key" instead of the SSH library's text.
+- Node page, Deploy SSH and Help no longer say logins are never stored; they point to Remember logins.
+- Settings: saved logins show their full address and port; the chain-call server port box is no longer cut off.
+- Error messages no longer start with "Error invoking remote method …" (seen in Reconnect servers, wallet create and elsewhere).
+- Reconnect servers: unticking the servers that failed turns the button into Done instead of a disabled "Try again 0 servers".
+- Reconnect servers: the window scrolls on a small screen and Reconnect / Cancel / Done sit in a footer that is always shown (the button was cut off in 0.3.2).
+- A server where some nodes already had a login is still offered for the rest (it was hidden).
+- A server that just reconnected stays in the list with its result; after a run only the failed servers stay ticked (Try again), and with none failed the button becomes Done.
+- Each server's own SSH port is used unless you type one; a list that loads after the window opened is selected; only servers with nodes waiting are ticked by default.
+- Passwords and keys are cleared when the window closes; a wrong key file, port or address is explained instead of ignored.
+- Nodes found from your wallet follow the Target and Protocol filters.
+
 ## 0.3.2 — Recover nodes; the node list can no longer be wiped (release candidate, private)
 
 - **Lost node list comes back by itself:** after an empty start (a lost or damaged `store.json`), the app

@@ -35,7 +35,8 @@ export function ReconnectServersModal({
   onFinished: () => void;
 }) {
   const [username, setUsername] = useState('root');
-  const [port, setPort] = useState('22');
+  // Empty = each server's own SSH port (from its known host or node record), else 22.
+  const [port, setPort] = useState('');
   const [method, setMethod] = useState<'password' | 'key'>('password');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
@@ -48,20 +49,49 @@ export function ReconnectServersModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [running, setRunning] = useState(false);
+  const [touched, setTouched] = useState(false);
+  const [notice, setNotice] = useState('');
 
+  // Servers still to do, plus every server already tried in this window: a server that just
+  // reconnected stays visible with its result instead of vanishing from the list.
   const list = useMemo(() => {
     const seen = new Set(servers.map((s) => s.host.toLowerCase()));
     const extra = extraHosts.filter((h) => !seen.has(h.toLowerCase())).map((host) => ({ host, port: 22, listedWaiting: 0, discovered: 0, connected: false }));
-    return [...servers.filter((s) => !s.connected), ...extra];
-  }, [servers, extraHosts]);
+    return [...servers.filter((s) => !s.connected || rows[s.host] || s.host === initialHost), ...extra];
+  }, [servers, extraHosts, rows, initialHost]);
+
+  // What to tick by default: the servers that actually have nodes waiting, not every server this
+  // app ever logged in to (those stay in the list, unticked).
+  const defaultSelection = (): Set<string> => {
+    if (initialHost) return new Set([initialHost]);
+    const wanted = list.filter((s) => !s.connected && s.listedWaiting + s.discovered > 0);
+    return new Set((wanted.length ? wanted : list.filter((s) => !s.connected)).map((s) => s.host));
+  };
 
   useEffect(() => {
-    if (!open) return;
-    setRows({});
-    setSelected(new Set(initialHost ? [initialHost] : list.map((s) => s.host)));
-    setApplyAll(!initialHost);
+    if (open) {
+      setRows({});
+      setTouched(false);
+      setNotice('');
+      setApplyAll(!initialHost);
+      return;
+    }
+    // Closed: drop the secrets, so they are neither kept in memory nor shown again on reopen.
+    setPassword('');
+    setPrivateKey('');
+    setKeyName('');
+    setPassphrase('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialHost]);
+
+  // The server list can arrive after the window opened (it loads with the page): select once it is
+  // there, until the user picks servers themselves.
+  const listKey = list.map((s) => s.host).join('|');
+  useEffect(() => {
+    if (!open || touched || running) return;
+    setSelected(defaultSelection());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, listKey, touched]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,6 +103,7 @@ export function ReconnectServersModal({
   if (!open) return null;
 
   const toggle = (host: string) => {
+    setTouched(true);
     setSelected((prev) => {
       if (!applyAll) return new Set([host]);
       const next = new Set(prev);
@@ -90,22 +121,45 @@ export function ReconnectServersModal({
     },
     { ok: 0, bad: 0, waiting: 0 },
   );
-  const loginReady = username.trim() && (method === 'password' ? password.length > 0 : privateKey.trim().length > 0);
+  const portNum = Number(port);
+  const portValid = port === '' || (Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535);
+  const loginReady = !!username.trim() && portValid && (method === 'password' ? password.length > 0 : privateKey.trim().length > 0);
   const targets = list.filter((s) => selected.has(s.host));
+  const tried = Object.values(rows).filter((r) => r.kind === 'done').length;
+  // After a run, everything still ticked reconnected (or the user unticked what is left): the main
+  // button becomes Done. Before, unticking the failed ones left a disabled "Try again 0 servers".
+  const allDone = !running && tried > 0 && targets.every((s) => {
+    const r = rows[s.host];
+    return r?.kind === 'done' && r.result.outcome === 'reconnected';
+  });
+  const hint = !username.trim()
+    ? 'Enter the server username.'
+    : !portValid
+      ? 'Port must be a number from 1 to 65535.'
+      : method === 'password' && !password
+        ? 'Enter the server password.'
+        : method === 'key' && !privateKey.trim()
+          ? 'Choose your SSH key file.'
+          : targets.length === 0
+            ? 'Select at least one server.'
+            : 'Nothing on the server is changed.';
 
   const run = async () => {
-    if (!loginReady || targets.length === 0) return;
+    if (!loginReady || targets.length === 0 || running) return;
+    setTouched(true);
+    setNotice('');
     setRunning(true);
     setRows((prev) => {
       const next = { ...prev };
       for (const s of targets) next[s.host] = { kind: 'waiting' };
       return next;
     });
+    const failed: string[] = [];
     for (const s of targets) {
       setRows((prev) => ({ ...prev, [s.host]: { kind: 'checking' } }));
       const creds = {
         host: s.host,
-        port: Number(port) || s.port || 22,
+        port: port ? portNum : s.port || 22,
         username: username.trim(),
         ...(method === 'password' ? { password } : { privateKey, ...(passphrase ? { passphrase } : {}) }),
       };
@@ -115,30 +169,54 @@ export function ReconnectServersModal({
       } catch (err) {
         result = { host: s.host, outcome: 'error', message: (err as Error).message, adopted: [], alreadyListed: [], skipped: [] };
       }
+      if (result.outcome !== 'reconnected') failed.push(s.host);
       setRows((prev) => ({ ...prev, [s.host]: { kind: 'done', result } }));
     }
+    // What is left to do is what failed: "Try again" then retries only those (a server that already
+    // reconnected is not logged in to again); with none failed the button becomes Done.
+    if (failed.length) setSelected(new Set(failed));
     setRunning(false);
     onFinished();
   };
 
   const selectFailed = () => {
+    setTouched(true);
     setApplyAll(true);
     setSelected(new Set(Object.entries(rows).filter(([, r]) => r.kind === 'done' && r.result.outcome !== 'reconnected').map(([h]) => h)));
   };
 
   const addHost = () => {
     const h = newHost.trim();
-    if (!/^[A-Za-z0-9.\-:]{1,253}$/.test(h)) return;
-    setExtraHosts((prev) => (prev.includes(h) ? prev : [...prev, h]));
+    if (!/^[A-Za-z0-9.\-:]{1,253}$/.test(h) || h.includes('..')) {
+      setNotice('That is not a server address. Use an IP address (e.g. 203.0.113.7) or a host name.');
+      return;
+    }
+    setNotice('');
+    setTouched(true);
+    setExtraHosts((prev) => (prev.some((p) => p.toLowerCase() === h.toLowerCase()) ? prev : [...prev, h]));
     setSelected((prev) => new Set([...(applyAll ? prev : []), h]));
     setNewHost('');
   };
 
   const readKeyFile = async (file: File | undefined) => {
     if (!file) return;
-    if (file.size > 32 * 1024) return;
-    setPrivateKey(await file.text());
-    setKeyName(file.name);
+    if (file.size > 32 * 1024) {
+      setNotice(`${file.name} is too large for an SSH key (${Math.round(file.size / 1024)} KB). Choose the private key file, e.g. id_ed25519.`);
+      return;
+    }
+    try {
+      const text = await file.text();
+      // OpenSSH / PEM keys say PRIVATE KEY; PuTTY keys (.ppk) start with PuTTY-User-Key-File.
+      if (!/PRIVATE KEY|PuTTY-User-Key-File/.test(text)) {
+        setNotice(`${file.name} does not look like a private key (choose the file without .pub).`);
+        return;
+      }
+      setNotice('');
+      setPrivateKey(text);
+      setKeyName(file.name);
+    } catch (err) {
+      setNotice(`Could not read ${file.name}: ${(err as Error).message}`);
+    }
   };
 
   // A portal: the page wrapper animates with a transform, which would make this fixed overlay
@@ -168,9 +246,12 @@ export function ReconnectServersModal({
           </button>
         </div>
 
-        <div className="flex flex-1 min-h-0 flex-wrap">
+        {/* Owner review (v0.3.2): on a small window the two panes stack and the dialog body did not scroll, so the
+            Reconnect button was cut off. The body scrolls now and the button lives in a footer that is always shown. */}
+        <div className="flex flex-1 min-h-0 flex-wrap overflow-y-auto">
           <form
-            className="flex flex-col gap-3 px-6 py-5 overflow-auto"
+            id="reconnect-servers-form"
+            className="flex flex-col gap-3 px-6 py-5"
             style={{ flex: '1 1 300px', maxWidth: 340, borderRight: '1px solid var(--border)' }}
             onSubmit={(e) => {
               e.preventDefault();
@@ -184,7 +265,14 @@ export function ReconnectServersModal({
               </label>
               <label className="flex flex-col gap-1" style={{ width: 80 }}>
                 <span className="field-label">Port</span>
-                <input className="input" value={port} onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))} inputMode="numeric" />
+                <input
+                  className="input"
+                  value={port}
+                  placeholder="22"
+                  title="Leave empty to use each server's own SSH port (22 if unknown)."
+                  onChange={(e) => setPort(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  inputMode="numeric"
+                />
               </label>
             </div>
             <div className="flex flex-col gap-1">
@@ -223,7 +311,9 @@ export function ReconnectServersModal({
             <label className="flex items-start gap-2 text-[13px]" style={{ color: 'var(--text)', lineHeight: 1.4 }}>
               <input type="checkbox" checked={applyAll} onChange={(e) => setApplyAll(e.target.checked)} className="mt-0.5" />
               <span>
-                Use this login for all {selected.size} selected server{selected.size === 1 ? '' : 's'}
+                {targets.length === 0
+                  ? 'Use this login for every selected server'
+                  : `Use this login for all ${targets.length} selected server${targets.length === 1 ? '' : 's'}`}
                 <span className="block text-[12px]" style={{ color: 'var(--text-dim)' }}>
                   Servers with a different login show "Wrong login": select just those and try again.
                 </span>
@@ -238,11 +328,6 @@ export function ReconnectServersModal({
                 </span>
               </span>
             </label>
-            <div className="flex-1" />
-            <button type="submit" className="btn btn-primary" disabled={!loginReady || targets.length === 0 || running} style={{ height: 42, fontSize: 14 }}>
-              <MIcon name={running ? 'hourglass_top' : 'link'} size={16} />
-              {running ? 'Reconnecting…' : `Reconnect ${targets.length} server${targets.length === 1 ? '' : 's'}`}
-            </button>
           </form>
 
           <div className="flex flex-col min-w-0" style={{ flex: '999 1 420px' }}>
@@ -251,16 +336,19 @@ export function ReconnectServersModal({
                 <input
                   type="checkbox"
                   checked={allSelected}
-                  disabled={!applyAll}
-                  onChange={(e) => setSelected(e.target.checked ? new Set(list.map((s) => s.host)) : new Set())}
+                  disabled={!applyAll || running}
+                  onChange={(e) => {
+                    setTouched(true);
+                    setSelected(e.target.checked ? new Set(list.map((s) => s.host)) : new Set());
+                  }}
                 />
-                {selected.size} server{selected.size === 1 ? '' : 's'} selected
+                {targets.length} server{targets.length === 1 ? '' : 's'} selected
               </label>
               <span className="text-[12px]" style={{ color: 'var(--text-dim)' }}>
                 {counts.ok} reconnected · {counts.bad} need attention · {counts.waiting} waiting
               </span>
             </div>
-            <ul className="flex-1 overflow-auto m-0 p-0" style={{ listStyle: 'none' }}>
+            <ul className="flex-1 min-h-0 overflow-auto m-0 p-0" style={{ listStyle: 'none' }}>
               {list.length === 0 ? (
                 <li className="px-5 py-6 text-[13px]" style={{ color: 'var(--text-dim)' }}>
                   No servers known yet. Add your server's address below.
@@ -310,6 +398,44 @@ export function ReconnectServersModal({
                 </button>
               ) : null}
             </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 px-6 py-3 flex-wrap" style={{ borderTop: '1px solid var(--border)' }}>
+          <span
+            className="text-[12px]"
+            role={notice ? 'alert' : undefined}
+            style={{ color: notice ? 'var(--warn)' : 'var(--text-dim)', flex: '1 1 220px', minWidth: 0 }}
+          >
+            {notice ||
+              (running
+                ? `Checking ${targets.length} server${targets.length === 1 ? '' : 's'}, one at a time…`
+                : tried > 0
+                  ? `${counts.ok} reconnected${counts.bad ? ` · ${counts.bad} need attention` : ''}.`
+                  : hint)}
+          </span>
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={running}>
+              {tried > 0 ? 'Close' : 'Cancel'}
+            </button>
+            {allDone ? (
+              <button type="button" className="btn btn-primary" onClick={onClose} style={{ height: 40, fontSize: 14, padding: '0 18px' }}>
+                <MIcon name="check" size={16} />
+                Done
+              </button>
+            ) : (
+              <button
+                type="submit"
+                form="reconnect-servers-form"
+                className="btn btn-primary"
+                disabled={!loginReady || targets.length === 0 || running}
+                title={!loginReady || targets.length === 0 ? hint : undefined}
+                style={{ height: 40, fontSize: 14, padding: '0 18px' }}
+              >
+                <MIcon name={running ? 'hourglass_top' : 'link'} size={16} />
+                {running ? 'Reconnecting…' : `${tried > 0 ? 'Try again' : 'Reconnect'} ${targets.length} server${targets.length === 1 ? '' : 's'}`}
+              </button>
+            )}
           </div>
         </div>
       </div>
